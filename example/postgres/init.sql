@@ -1,3 +1,9 @@
+-- Cria o schema se não existir
+CREATE SCHEMA IF NOT EXISTS synk;
+
+-- Garante que tudo será criado no schema 'synk'
+SET search_path TO synk;
+
 CREATE TYPE job_state AS ENUM(
   'available',
   'cancelled',
