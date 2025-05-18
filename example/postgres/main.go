@@ -6,14 +6,12 @@ import (
 	"os"
 	"time"
 
-	"github.com/isaqueveras/synk"
-	"github.com/isaqueveras/synk/storage/postgresql"
-
-	"github.com/isaqueveras/synk/example/domain/biometry"
-	"github.com/isaqueveras/synk/example/domain/contract"
-
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/stdlib"
+
+	"github.com/isaqueveras/synk"
+	"github.com/isaqueveras/synk/example/worker"
+	"github.com/isaqueveras/synk/storage/postgresql"
 )
 
 func main() {
@@ -39,15 +37,14 @@ func main() {
 		synk.WithStorage(postgresql.New(db)),
 
 		// Sets the workers to be used.
-		synk.WithWorker(contract.NewWorker()),
-		synk.WithWorker(biometry.NewWorker()),
+		synk.WithWorker(worker.NewContract()),
+		synk.WithWorker(worker.NewBiometry()),
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Hour)
 	defer cancel()
 
 	client := synk.NewClient(ctx, opts...)
-
 	client.Start()
 	defer client.Stop()
 }
