@@ -13,4 +13,6 @@ type Storage interface {
 	// It takes the name of the queue and a limit on the number of jobs to retrieve.
 	// It returns a slice of pointers to JobRow and an error if the operation fails.
 	GetJobAvailable(queue string, limit int32) ([]*types.JobRow, error)
+
+	Insert(queue, kind string, args []byte) error
 }
