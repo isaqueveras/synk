@@ -88,13 +88,13 @@ func NewClient(ctx context.Context, opts ...Option) client {
 		opt(clt.cfg)
 	}
 
-	if len(clt.cfg.queues) == 0 {
-		panic("no queues configured")
-	}
+	// if len(clt.cfg.queues) == 0 {
+	// 	panic("no queues configured")
+	// }
 
-	if clt.cfg.workers == nil {
-		panic("no workers configured")
-	}
+	// if clt.cfg.workers == nil {
+	// 	panic("no workers configured")
+	// }
 
 	if clt.cfg.storage == nil {
 		panic("no storage configured")
