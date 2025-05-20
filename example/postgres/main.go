@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -45,6 +47,44 @@ func main() {
 	defer cancel()
 
 	client := synk.NewClient(ctx, opts...)
-	client.Start()
 	defer client.Stop()
+
+	wg := sync.WaitGroup{}
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		client.Exec()
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		var i int
+		for range time.NewTicker(time.Second / 1000).C {
+			i++
+			if err := client.Insert("ownership", worker.ContractArgs{
+				CustomerID:   fmt.Sprintf("%d", i),
+				CustomerName: fmt.Sprintf("Nome do Cliente %d", i),
+			}); err != nil {
+				panic(err)
+			}
+
+			if err := client.Insert("default", worker.ContractArgs{
+				CustomerID:   fmt.Sprintf("%d", i+1),
+				CustomerName: fmt.Sprintf("Nome do Cliente %d", i+1),
+			}); err != nil {
+				panic(err)
+			}
+
+			if err := client.Insert("ownership", worker.BiometryArgs{
+				CustomerID: fmt.Sprintf("%d", i*6),
+				BiometryID: fmt.Sprintf("%d", i*3),
+			}); err != nil {
+				panic(err)
+			}
+		}
+	}()
+
+	wg.Wait()
 }

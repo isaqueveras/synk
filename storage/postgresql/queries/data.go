@@ -60,3 +60,18 @@ func (q *Queries) GetJobAvailable(ctx context.Context, tx *sql.Tx, queue string,
 
 	return jobs, nil
 }
+
+const insertSQL = `
+INSERT INTO job (queue, kind, args, max_attempts)
+VALUES ($1, $2, $3::jsonb, 3)
+RETURNING id`
+
+// Insert ...
+func (q *Queries) Insert(ctx context.Context, tx *sql.Tx, queue, kind string, args []byte) error {
+	var id *int64
+	if err := tx.QueryRowContext(ctx, insertSQL, queue, kind, args).Scan(&id); err != nil {
+		return err
+	}
+	_ = id
+	return nil
+}

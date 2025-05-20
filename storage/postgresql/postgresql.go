@@ -17,7 +17,12 @@ func New(db *sql.DB, timeouts ...time.Duration) storage.Storage {
 	if len(timeouts) != 0 {
 		timeout = timeouts[0]
 	}
-	return &postgres{ctx: context.Background(), db: db, timeout: timeout, queries: queries.New()}
+	return &postgres{
+		ctx:     context.Background(),
+		db:      db,
+		timeout: timeout,
+		queries: queries.New(),
+	}
 }
 
 type postgres struct {
@@ -54,4 +59,26 @@ func (pg *postgres) GetJobAvailable(queue string, limit int32) (items []*types.J
 	}
 
 	return
+}
+
+// Insert ...
+func (pg *postgres) Insert(queue, kind string, args []byte) error {
+	ctx, cancel := context.WithTimeout(pg.ctx, pg.timeout)
+	defer cancel()
+
+	tx, err := pg.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if err = pg.queries.Insert(ctx, tx, queue, kind, args); err != nil {
+		return err
+	}
+
+	if err = tx.Commit(); err != nil {
+		return err
+	}
+
+	return nil
 }
