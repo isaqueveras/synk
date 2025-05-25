@@ -19,16 +19,29 @@ services:
       timeout: 5s
       retries: 5
 
-  app:
+  consumer:
     image: golang:1.23
-    container_name: pg_synk_app
+    container_name: pg_synk_app_consumer
     depends_on:
       postgres:
         condition: service_healthy
     environment:
       SYNK_DATABASE_POSTGRES: "postgres://postgres:postgres@postgres:5432/synkdb?sslmode=disable&search_path=synk"
     volumes:
-      - .:/app
+      - ./consumer:/app
+    working_dir: /app
+    command: ["go", "run", "main.go"]
+
+  producer:
+    image: golang:1.23
+    container_name: pg_synk_app_producer
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      SYNK_DATABASE_POSTGRES: "postgres://postgres:postgres@postgres:5432/synkdb?sslmode=disable&search_path=synk"
+    volumes:
+      - ./producer:/app
     working_dir: /app
     command: ["go", "run", "main.go"]
 

@@ -1,9 +1,9 @@
-module example
+module example/postgres/producer
 
 go 1.23
 
 require (
-	github.com/isaqueveras/synk v0.0.0-20250518174014-18745d3ca515
+	github.com/isaqueveras/synk v0.0.0-20250518184525-a297011cb1bc
 	github.com/jackc/pgx/v5 v5.7.2
 )
 
@@ -17,4 +17,4 @@ require (
 	golang.org/x/text v0.21.0 // indirect
 )
 
-// replace github.com/isaqueveras/synk => ../../
+// replace github.com/isaqueveras/synk => ../../../

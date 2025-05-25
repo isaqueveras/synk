@@ -7,6 +7,7 @@ package synk
 import (
 	"context"
 	"crypto/rand"
+	"encoding/json"
 	"log"
 	"sync"
 	"time"
@@ -55,23 +56,23 @@ type QueueConfig struct {
 	JobTimeout time.Duration
 }
 
-// IClient defines the interface for a client that can start and stop processing jobs.
+// client defines the interface for a client that can start and stop processing jobs.
 // It includes methods to start and stop the client, which manages job queues and workers.
-type IClient interface {
-	// Start begins the processing of jobs by the client.
+type client interface {
+	// Exec begins the processing of jobs by the client.
 	// It initializes the necessary context and starts the producers for each queue.
-	Start()
-
+	Exec()
 	// Stop halts the processing of jobs by the client.
 	// It cancels the context and stops all producers.
 	Stop()
+	// Insert add a job into the queue to be processed.
+	Insert(queue string, params JobArgs) error
 }
 
-// NewClient creates a new instance of IClient with the provided context and options.
-// It initializes the client's configuration, queues, and workers. If no queues or workers
-// are configured, it panics. It also generates a unique client ID and sets up producers
-// for each queue.
-func NewClient(ctx context.Context, opts ...Option) IClient {
+// NewClient creates a new instance of worker with the provided context and options.
+// It initializes the client's configuration, queues, and workers. If no queues or workers are
+// configured, it panics. It also generates a unique client ID and sets up producers for each queue.
+func NewClient(ctx context.Context, opts ...Option) client {
 	clt := &Client{
 		ctx:       ctx,
 		producers: make(map[string]*producer),
@@ -85,21 +86,22 @@ func NewClient(ctx context.Context, opts ...Option) IClient {
 		opt(clt.cfg)
 	}
 
-	if len(clt.cfg.queues) == 0 {
-		panic("no queues configured")
-	}
-
-	if clt.cfg.workers == nil {
-		panic("no workers configured")
-	}
-
 	if clt.cfg.storage == nil {
 		panic("no storage configured")
 	}
 
-	var err error
-	if clt.id, err = ulid.New(ulid.Now(), rand.Reader); err != nil {
+	if err := clt.cfg.storage.Ping(); err != nil {
+		panic("failed to ping storage: " + err.Error())
+	}
+
+	clientID, err := ulid.New(ulid.Now(), rand.Reader)
+	if err != nil {
 		panic(err)
+	}
+
+	clt.id = clientID
+	if len(clt.cfg.queues) == 0 || clt.cfg.workers == nil {
+		return clt
 	}
 
 	for queue, config := range clt.cfg.queues {
@@ -119,10 +121,6 @@ func NewClient(ctx context.Context, opts ...Option) IClient {
 		}
 	}
 
-	if err = clt.cfg.storage.Ping(); err != nil {
-		panic("failed to ping storage: " + err.Error())
-	}
-
 	return clt
 }
 
@@ -130,15 +128,28 @@ func NewClient(ctx context.Context, opts ...Option) IClient {
 // It calls the cancel functions associated with the client to
 // gracefully shut down any operations.
 func (c *Client) Stop() {
-	c.cancel()
-	c.workCancel()
+	if c.cancel != nil {
+		c.cancel()
+	}
+	if c.workCancel != nil {
+		c.workCancel()
+	}
 }
 
-// Start it initializes the client's context and starts the producers for each queue.
+// Insert add a job into the queue to be processed.
+func (c *Client) Insert(queue string, params JobArgs) error {
+	args, err := json.Marshal(params)
+	if err != nil {
+		return err
+	}
+	return c.cfg.storage.Insert(queue, params.Kind(), args)
+}
+
+// Exec it initializes the client's context and starts the producers for each queue.
 // Each producer runs in a separate goroutine, fetching and processing jobs according to its configuration.
 // The method waits for all producers to complete their work before returning.
 // It also sets up a heartbeat mechanism to log the total number of completed jobs at regular intervals.
-func (c *Client) Start() {
+func (c *Client) Exec() {
 	c.ctx, c.cancel = context.WithCancel(c.ctx)
 
 	ctx, cancel := context.WithCancel(c.ctx)

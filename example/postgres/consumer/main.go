@@ -6,19 +6,18 @@ import (
 	"os"
 	"time"
 
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/stdlib"
-
 	"github.com/isaqueveras/synk"
 	"github.com/isaqueveras/synk/example/worker"
 	"github.com/isaqueveras/synk/storage/postgresql"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/stdlib"
 )
 
 func main() {
 	stdlib.RegisterConnConfig(&pgx.ConnConfig{})
 
-	var database = os.Getenv("SYNK_DATABASE_POSTGRES")
-	db, err := sql.Open("pgx", database)
+	db, err := sql.Open("pgx", os.Getenv("SYNK_DATABASE_POSTGRES"))
 	if err != nil {
 		panic(err)
 	}
@@ -28,8 +27,8 @@ func main() {
 		// Sets the configuration for the queues to be used.
 		synk.WithQueue("default", synk.QueueConfigDefault),
 		synk.WithQueue("ownership", &synk.QueueConfig{
-			MaxWorkers: 10,
-			TimeFetch:  time.Second,
+			MaxWorkers: 100,
+			TimeFetch:  time.Second / 10,
 			JobTimeout: time.Minute,
 		}),
 
@@ -45,6 +44,7 @@ func main() {
 	defer cancel()
 
 	client := synk.NewClient(ctx, opts...)
-	client.Start()
 	defer client.Stop()
+
+	client.Exec()
 }
