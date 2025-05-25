@@ -17,4 +17,4 @@ require (
 	golang.org/x/text v0.21.0 // indirect
 )
 
-replace github.com/isaqueveras/synk => ../../../
+// replace github.com/isaqueveras/synk => ../../../
