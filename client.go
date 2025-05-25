@@ -65,15 +65,13 @@ type client interface {
 	// Stop halts the processing of jobs by the client.
 	// It cancels the context and stops all producers.
 	Stop()
-
-	// Insert ...
+	// Insert add a job into the queue to be processed.
 	Insert(queue string, params JobArgs) error
 }
 
 // NewClient creates a new instance of worker with the provided context and options.
-// It initializes the client's configuration, queues, and workers. If no queues or workers
-// are configured, it panics. It also generates a unique client ID and sets up producers
-// for each queue.
+// It initializes the client's configuration, queues, and workers. If no queues or workers are
+// configured, it panics. It also generates a unique client ID and sets up producers for each queue.
 func NewClient(ctx context.Context, opts ...Option) client {
 	clt := &Client{
 		ctx:       ctx,
@@ -88,21 +86,22 @@ func NewClient(ctx context.Context, opts ...Option) client {
 		opt(clt.cfg)
 	}
 
-	// if len(clt.cfg.queues) == 0 {
-	// 	panic("no queues configured")
-	// }
-
-	// if clt.cfg.workers == nil {
-	// 	panic("no workers configured")
-	// }
-
 	if clt.cfg.storage == nil {
 		panic("no storage configured")
 	}
 
-	var err error
-	if clt.id, err = ulid.New(ulid.Now(), rand.Reader); err != nil {
+	if err := clt.cfg.storage.Ping(); err != nil {
+		panic("failed to ping storage: " + err.Error())
+	}
+
+	clientID, err := ulid.New(ulid.Now(), rand.Reader)
+	if err != nil {
 		panic(err)
+	}
+
+	clt.id = clientID
+	if len(clt.cfg.queues) == 0 || clt.cfg.workers == nil {
+		return clt
 	}
 
 	for queue, config := range clt.cfg.queues {
@@ -122,10 +121,6 @@ func NewClient(ctx context.Context, opts ...Option) client {
 		}
 	}
 
-	if err = clt.cfg.storage.Ping(); err != nil {
-		panic("failed to ping storage: " + err.Error())
-	}
-
 	return clt
 }
 
@@ -133,8 +128,12 @@ func NewClient(ctx context.Context, opts ...Option) client {
 // It calls the cancel functions associated with the client to
 // gracefully shut down any operations.
 func (c *Client) Stop() {
-	c.cancel()
-	c.workCancel()
+	if c.cancel != nil {
+		c.cancel()
+	}
+	if c.workCancel != nil {
+		c.workCancel()
+	}
 }
 
 // Insert ...

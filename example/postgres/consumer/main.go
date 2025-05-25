@@ -27,8 +27,8 @@ func main() {
 		// Sets the configuration for the queues to be used.
 		synk.WithQueue("default", synk.QueueConfigDefault),
 		synk.WithQueue("ownership", &synk.QueueConfig{
-			MaxWorkers: 10,
-			TimeFetch:  time.Second,
+			MaxWorkers: 100,
+			TimeFetch:  time.Second / 10,
 			JobTimeout: time.Minute,
 		}),
 
