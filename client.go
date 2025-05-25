@@ -136,7 +136,7 @@ func (c *Client) Stop() {
 	}
 }
 
-// Insert ...
+// Insert add a job into the queue to be processed.
 func (c *Client) Insert(queue string, params JobArgs) error {
 	args, err := json.Marshal(params)
 	if err != nil {
