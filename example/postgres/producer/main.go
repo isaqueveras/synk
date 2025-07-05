@@ -31,9 +31,9 @@ func main() {
 	defer client.Stop()
 
 	var i int
-	for range time.NewTicker(time.Second / 10).C {
+	for range time.NewTicker(time.Second).C {
 		i++
-		if err := client.Insert("ownership", worker.ContractArgs{
+		if _, err := client.Insert("ownership", worker.ContractArgs{
 			CustomerID:   fmt.Sprintf("%d", i),
 			CustomerName: fmt.Sprintf("Nome do Cliente %d", i),
 		}); err != nil {

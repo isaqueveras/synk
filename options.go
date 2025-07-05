@@ -6,6 +6,7 @@ package synk
 
 import (
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/isaqueveras/synk/storage"
@@ -58,5 +59,12 @@ func WithQueue(name string, queueCfg ...*QueueConfig) Option {
 func WithStorage(storage storage.Storage) Option {
 	return func(cfg *config) {
 		cfg.storage = storage
+	}
+}
+
+// WithLogger sets the logger for the synk client.
+func WithLogger(logger *slog.Logger) Option {
+	return func(cfg *config) {
+		cfg.logger = logger
 	}
 }

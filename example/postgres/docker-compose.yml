@@ -1,9 +1,8 @@
-version: '3.8'
-
 services:
   postgres:
     image: postgres:15
-    container_name: pg_synk_database
+    container_name: pg_synk_db_postgres
+    restart: always
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
@@ -28,8 +27,8 @@ services:
     environment:
       SYNK_DATABASE_POSTGRES: "postgres://postgres:postgres@postgres:5432/synkdb?sslmode=disable&search_path=synk"
     volumes:
-      - ./consumer:/app
-    working_dir: /app
+      - ../..:/workspace
+    working_dir: /workspace/example/postgres/consumer
     command: ["go", "run", "main.go"]
 
   producer:
@@ -41,8 +40,8 @@ services:
     environment:
       SYNK_DATABASE_POSTGRES: "postgres://postgres:postgres@postgres:5432/synkdb?sslmode=disable&search_path=synk"
     volumes:
-      - ./producer:/app
-    working_dir: /app
+      - ../..:/workspace
+    working_dir: /workspace/example/postgres/producer
     command: ["go", "run", "main.go"]
 
 volumes:
