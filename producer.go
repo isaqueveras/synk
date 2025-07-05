@@ -117,6 +117,10 @@ func (p *producer) startWork(ctx context.Context, job *types.JobRow, work work) 
 		panic(err)
 	}
 
+	if err := p.storage.UpdateJobState(job.Id, types.JobStateCompleted, time.Now(), nil); err != nil {
+		p.logger.ErrorContext(ctx, fmt.Sprintf("Failed to update job %d to completed: %v", job.Id, err))
+	}
+
 	p.logger.DebugContext(ctx, "Job completed",
 		slog.Int64("job_id", job.Id),
 		slog.String("kind", job.Kind),

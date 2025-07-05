@@ -26,7 +26,7 @@ type Storage interface {
 	// UpdateJobState updates the state of a job identified by its ID.
 	// It takes the job ID, the new state, an optional finalized time, and an
 	// optional error message. It returns an error if the update fails.
-	UpdateJobState(jobID int64, newState string, finalizedAt *time.Time, errorMsg *string) error
+	UpdateJobState(jobID int64, newState types.JobState, finalizedAt time.Time, errorMsg *string) error
 
 	// RescheduleJob reschedules a job identified by its ID to be executed at a specified time.
 	// It takes the job ID, the time to reschedule to, and the attempt number

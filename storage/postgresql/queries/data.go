@@ -72,18 +72,19 @@ func (q *Queries) Insert(ctx context.Context, tx *sql.Tx, queue, kind string, ar
 
 const updateJobStateSQL = `
 UPDATE synk.job SET 
-	state = $1, 
-	finalized_at = $2, 
-	errors = CASE WHEN $3 IS NOT NULL THEN array_append(errors, $3::jsonb) ELSE errors END 
-WHERE id = $4`
+	state = $1,
+	finalized_at = $2
+	-- errors = CASE WHEN $3::jsonb IS NOT NULL THEN array_append(errors, $3::jsonb) ELSE errors END 
+WHERE id = $3`
 
 // UpdateJobState updates the state of a job identified by its ID in the database.
-func (q *Queries) UpdateJobState(ctx context.Context, tx *sql.Tx, jobID int64, newState string, finalizedAt *time.Time, errorMsg *string) error {
-	var errMsgJSON any = nil
-	if errorMsg != nil {
-		errMsgJSON = *errorMsg
-	}
-	_, err := tx.ExecContext(ctx, updateJobStateSQL, newState, finalizedAt, errMsgJSON, jobID)
+func (q *Queries) UpdateJobState(ctx context.Context, tx *sql.Tx, jobID int64, newState types.JobState, finalizedAt time.Time, errorMsg *string) error {
+	// var errMsgJSON any = []byte("NULL")
+	// if errorMsg != nil {
+	// 	errMsgJSON = *errorMsg
+	// }
+	_ = errorMsg
+	_, err := tx.ExecContext(ctx, updateJobStateSQL, newState, finalizedAt, jobID)
 	return err
 }
 
