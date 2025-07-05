@@ -62,11 +62,13 @@ type client interface {
 	// Exec begins the processing of jobs by the client.
 	// It initializes the necessary context and starts the producers for each queue.
 	Exec()
+
 	// Stop halts the processing of jobs by the client.
 	// It cancels the context and stops all producers.
 	Stop()
+
 	// Insert add a job into the queue to be processed.
-	Insert(queue string, params JobArgs) error
+	Insert(queue string, params JobArgs) (*int64, error)
 }
 
 // NewClient creates a new instance of worker with the provided context and options.
@@ -137,10 +139,10 @@ func (c *Client) Stop() {
 }
 
 // Insert add a job into the queue to be processed.
-func (c *Client) Insert(queue string, params JobArgs) error {
+func (c *Client) Insert(queue string, params JobArgs) (*int64, error) {
 	args, err := json.Marshal(params)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	return c.cfg.storage.Insert(queue, params.Kind(), args)
 }

@@ -58,11 +58,34 @@ func (pg *postgres) GetJobAvailable(queue string, limit int32) (items []*types.J
 		return nil, err
 	}
 
-	return
+	return items, nil
 }
 
-// Insert ...
-func (pg *postgres) Insert(queue, kind string, args []byte) error {
+// Insert inserts a new job into the specified queue with the given kind and arguments.
+func (pg *postgres) Insert(queue, kind string, args []byte) (*int64, error) {
+	ctx, cancel := context.WithTimeout(pg.ctx, pg.timeout)
+	defer cancel()
+
+	tx, err := pg.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	var id *int64
+	if id, err = pg.queries.Insert(ctx, tx, queue, kind, args); err != nil {
+		return nil, err
+	}
+
+	if err = tx.Commit(); err != nil {
+		return nil, err
+	}
+
+	return id, nil
+}
+
+// UpdateJobState updates the state, finalized_at, and error message of a job.
+func (pg *postgres) UpdateJobState(jobID int64, newState string, finalizedAt *time.Time, errorMsg *string) error {
 	ctx, cancel := context.WithTimeout(pg.ctx, pg.timeout)
 	defer cancel()
 
@@ -72,13 +95,41 @@ func (pg *postgres) Insert(queue, kind string, args []byte) error {
 	}
 	defer tx.Rollback()
 
-	if err = pg.queries.Insert(ctx, tx, queue, kind, args); err != nil {
+	if err = pg.queries.UpdateJobState(ctx, tx, jobID, newState, finalizedAt, errorMsg); err != nil {
 		return err
 	}
 
-	if err = tx.Commit(); err != nil {
+	return tx.Commit()
+}
+
+// RescheduleJob updates the scheduled_at and attempt fields for a job.
+func (pg *postgres) RescheduleJob(jobID int64, scheduledAt time.Time, attempt int) error {
+	ctx, cancel := context.WithTimeout(pg.ctx, pg.timeout)
+	defer cancel()
+
+	tx, err := pg.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if err = pg.queries.RescheduleJob(ctx, tx, jobID, scheduledAt, attempt); err != nil {
 		return err
 	}
 
-	return nil
+	return tx.Commit()
+}
+
+// ListJobsByState returns all jobs with a given state.
+func (pg *postgres) ListJobsByState(state string) (jobs []*types.JobRow, err error) {
+	ctx, cancel := context.WithTimeout(pg.ctx, pg.timeout)
+	defer cancel()
+
+	tx, err := pg.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	return pg.queries.ListJobsByState(ctx, tx, state)
 }
