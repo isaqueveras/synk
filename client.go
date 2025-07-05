@@ -8,7 +8,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/json"
-	"log"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -36,6 +36,7 @@ type config struct {
 	queues  map[string]*QueueConfig
 	workers map[string]*workerInfo
 	storage storage.Storage
+	logger  *slog.Logger
 }
 
 // QueueConfigDefault is the default configuration for the queue system.
@@ -81,6 +82,7 @@ func NewClient(ctx context.Context, opts ...Option) client {
 		cfg: &config{
 			queues:  make(map[string]*QueueConfig),
 			workers: make(map[string]*workerInfo),
+			logger:  slog.Default(),
 		},
 	}
 
@@ -88,26 +90,34 @@ func NewClient(ctx context.Context, opts ...Option) client {
 		opt(clt.cfg)
 	}
 
-	if clt.cfg.storage == nil {
-		panic("no storage configured")
-	}
-
-	if err := clt.cfg.storage.Ping(); err != nil {
-		panic("failed to ping storage: " + err.Error())
-	}
-
 	clientID, err := ulid.New(ulid.Now(), rand.Reader)
 	if err != nil {
-		panic(err)
+		clt.cfg.logger.ErrorContext(ctx, "failed to create client ID: "+err.Error())
+		return nil
 	}
 
 	clt.id = clientID
+	clt.cfg.logger = clt.cfg.logger.WithGroup("client").With(slog.String("id", clt.id.String()))
+
+	if clt.cfg.storage == nil {
+		clt.cfg.logger.ErrorContext(ctx, "no storage configured")
+		return nil
+	}
+
+	if err := clt.cfg.storage.Ping(); err != nil {
+		clt.cfg.logger.ErrorContext(ctx, "failed to ping storage: "+err.Error())
+		return nil
+	}
+
 	if len(clt.cfg.queues) == 0 || clt.cfg.workers == nil {
+		clt.cfg.logger.DebugContext(ctx, "no queues or workers configured")
 		return clt
 	}
 
 	for queue, config := range clt.cfg.queues {
+		logger := clt.cfg.logger.WithGroup("producer").With(slog.String("queue", queue))
 		clt.producers[queue] = &producer{
+			logger:      logger,
 			workers:     clt.cfg.workers,
 			storage:     clt.cfg.storage,
 			jobTimeout:  config.JobTimeout,
@@ -130,10 +140,13 @@ func NewClient(ctx context.Context, opts ...Option) client {
 // It calls the cancel functions associated with the client to
 // gracefully shut down any operations.
 func (c *Client) Stop() {
+	c.cfg.logger.Debug("Stopping client")
 	if c.cancel != nil {
+		c.cfg.logger.Debug("Stopping client context")
 		c.cancel()
 	}
 	if c.workCancel != nil {
+		c.cfg.logger.Debug("Stopping work cancel function")
 		c.workCancel()
 	}
 }
@@ -144,7 +157,26 @@ func (c *Client) Insert(queue string, params JobArgs) (*int64, error) {
 	if err != nil {
 		return nil, err
 	}
-	return c.cfg.storage.Insert(queue, params.Kind(), args)
+
+	id, err := c.cfg.storage.Insert(queue, params.Kind(), args)
+	if err != nil {
+		c.cfg.logger.ErrorContext(c.ctx, "failed to insert job into queue",
+			slog.String("error", err.Error()),
+			slog.String("queue", queue),
+			slog.String("kind", params.Kind()),
+			slog.Any("args", params),
+		)
+		return nil, err
+	}
+
+	c.cfg.logger.DebugContext(c.ctx, "job inserted into queue",
+		slog.String("queue", queue),
+		slog.Int64("job_id", *id),
+		slog.String("kind", params.Kind()),
+		slog.Any("args", params),
+	)
+
+	return id, nil
 }
 
 // Exec it initializes the client's context and starts the producers for each queue.
@@ -171,11 +203,13 @@ func (c *Client) Exec() {
 			for {
 				select {
 				case <-c.ctx.Done():
+					producer.logger.DebugContext(c.ctx, "Producer context done: "+c.ctx.Err().Error())
 					return
 				case <-time.NewTicker(producer.config.timeFetch).C:
 					producer.process(ctx, jobs)
 					select {
 					case <-c.ctx.Done():
+						producer.logger.DebugContext(c.ctx, "Producer context done: "+c.ctx.Err().Error())
 						return
 					default:
 					}
@@ -187,6 +221,11 @@ func (c *Client) Exec() {
 		}()
 	}
 
-	log.Println("Client successfully started:", c.id.String())
+	c.cfg.logger.InfoContext(c.ctx, "Client started",
+		slog.Int("num_producers", len(c.producers)),
+		slog.Int("num_queues", len(c.cfg.queues)),
+		slog.Int("num_workers", len(c.cfg.workers)),
+	)
+
 	c.wg.Wait()
 }

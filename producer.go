@@ -3,7 +3,7 @@ package synk
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"runtime/debug"
 	"sync/atomic"
 	"time"
@@ -13,6 +13,7 @@ import (
 )
 
 type producer struct {
+	logger      *slog.Logger
 	jobsChannel chan *types.JobRow
 	config      *producerConfig
 	storage     storage.Storage
@@ -58,10 +59,14 @@ func (p *producer) heartbeat(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			fmt.Printf("ctx.Err(): %v\n", ctx.Err())
+			p.logger.ErrorContext(ctx, "Heartbeat context done: "+ctx.Err().Error())
 			return
 		case <-ticker.C:
-			log.Println("Heartbeat: total completed jobs", p.config.queueName, p.totalWorkPerformed.Load())
+			p.logger.InfoContext(ctx, "Heartbeat: total completed jobs",
+				slog.String("queue", p.config.queueName),
+				slog.Uint64("total_completed_jobs", p.totalWorkPerformed.Load()),
+				slog.Int64("active_jobs", int64(p.numJobsActive.Load())),
+			)
 		}
 	}
 }
@@ -74,7 +79,8 @@ func (p *producer) start(ctx context.Context, jobs []*types.JobRow) {
 		}
 
 		if work == nil {
-			log.Printf("[ERROR] Worker not defined for this type: JobID: %d, Kind: %s", job.Id, job.Kind)
+			p.logger.ErrorContext(ctx, "Worker not defined for this type",
+				slog.Int64("job_id", job.Id), slog.String("kind", job.Kind))
 			return
 		}
 
@@ -88,7 +94,7 @@ func (p *producer) start(ctx context.Context, jobs []*types.JobRow) {
 func (p *producer) startWork(ctx context.Context, job *types.JobRow, work work) {
 	defer func() {
 		if r := recover(); r != nil {
-			log.Println("PANIC:", r, fmt.Sprintf("\n%s", string(debug.Stack())))
+			p.logger.ErrorContext(ctx, "PANIC:", r, fmt.Sprintf("\n%s", string(debug.Stack())))
 		}
 	}()
 
@@ -111,9 +117,15 @@ func (p *producer) startWork(ctx context.Context, job *types.JobRow, work work) 
 		panic(err)
 	}
 
+	p.logger.DebugContext(ctx, "Job completed",
+		slog.Int64("job_id", job.Id),
+		slog.String("kind", job.Kind),
+		slog.String("args", string(job.Args)),
+	)
+
 	select {
 	case <-ctx.Done():
-		fmt.Printf("ctx.Err(): %v\n", ctx.Err())
+		p.logger.ErrorContext(ctx, "Context done: "+ctx.Err().Error())
 		return
 	default:
 	}
