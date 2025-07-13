@@ -7,6 +7,7 @@ package synk
 import (
 	"context"
 	"crypto/rand"
+	"database/sql"
 	"encoding/json"
 	"log/slog"
 	"sync"
@@ -18,9 +19,9 @@ import (
 	"github.com/oklog/ulid/v2"
 )
 
-// Client represents a client that manages the configuration,
+// IClient represents a client that manages the configuration,
 // context, and producers for a specific task.
-type Client struct {
+type IClient struct {
 	id  ulid.ULID
 	cfg *config
 	wg  sync.WaitGroup
@@ -57,9 +58,9 @@ type QueueConfig struct {
 	JobTimeout time.Duration
 }
 
-// client defines the interface for a client that can start and stop processing jobs.
-// It includes methods to start and stop the client, which manages job queues and workers.
-type client interface {
+// Client defines the interface for a Client that can start and stop processing jobs.
+// It includes methods to start and stop the Client, which manages job queues and workers.
+type Client interface {
 	// Exec begins the processing of jobs by the client.
 	// It initializes the necessary context and starts the producers for each queue.
 	Exec()
@@ -70,13 +71,17 @@ type client interface {
 
 	// Insert add a job into the queue to be processed.
 	Insert(queue string, params JobArgs) (*int64, error)
+
+	// InsertTx adds a job into the specified queue within the context of the provided
+	// transaction, allowing the operation to be part of an atomic database transaction.
+	InsertTx(tx *sql.Tx, queue string, params JobArgs) (*int64, error)
 }
 
 // NewClient creates a new instance of worker with the provided context and options.
 // It initializes the client's configuration, queues, and workers. If no queues or workers are
 // configured, it panics. It also generates a unique client ID and sets up producers for each queue.
-func NewClient(ctx context.Context, opts ...Option) client {
-	clt := &Client{
+func NewClient(ctx context.Context, opts ...Option) Client {
+	clt := &IClient{
 		ctx:       ctx,
 		producers: make(map[string]*producer),
 		cfg: &config{
@@ -139,7 +144,7 @@ func NewClient(ctx context.Context, opts ...Option) client {
 // Stop cancels the client's context and stops any ongoing work.
 // It calls the cancel functions associated with the client to
 // gracefully shut down any operations.
-func (c *Client) Stop() {
+func (c *IClient) Stop() {
 	c.cfg.logger.Debug("Stopping client")
 	if c.cancel != nil {
 		c.cfg.logger.Debug("Stopping client context")
@@ -152,7 +157,7 @@ func (c *Client) Stop() {
 }
 
 // Insert add a job into the queue to be processed.
-func (c *Client) Insert(queue string, params JobArgs) (*int64, error) {
+func (c *IClient) Insert(queue string, params JobArgs) (*int64, error) {
 	args, err := json.Marshal(params)
 	if err != nil {
 		return nil, err
@@ -179,11 +184,40 @@ func (c *Client) Insert(queue string, params JobArgs) (*int64, error) {
 	return id, nil
 }
 
+// InsertTx adds a job into the specified queue within the context of the provided
+// transaction, allowing the operation to be part of an atomic database transaction.
+func (c *IClient) InsertTx(tx *sql.Tx, queue string, params JobArgs) (*int64, error) {
+	args, err := json.Marshal(params)
+	if err != nil {
+		return nil, err
+	}
+
+	id, err := c.cfg.storage.InsertTx(tx, queue, params.Kind(), args)
+	if err != nil {
+		c.cfg.logger.ErrorContext(c.ctx, "failed to insert job into queue within transaction",
+			slog.String("error", err.Error()),
+			slog.String("queue", queue),
+			slog.String("kind", params.Kind()),
+			slog.Any("args", params),
+		)
+		return nil, err
+	}
+
+	c.cfg.logger.DebugContext(c.ctx, "job inserted into queue within transaction",
+		slog.String("queue", queue),
+		slog.Int64("job_id", *id),
+		slog.String("kind", params.Kind()),
+		slog.Any("args", params),
+	)
+
+	return id, nil
+}
+
 // Exec it initializes the client's context and starts the producers for each queue.
 // Each producer runs in a separate goroutine, fetching and processing jobs according to its configuration.
 // The method waits for all producers to complete their work before returning.
 // It also sets up a heartbeat mechanism to log the total number of completed jobs at regular intervals.
-func (c *Client) Exec() {
+func (c *IClient) Exec() {
 	c.ctx, c.cancel = context.WithCancel(c.ctx)
 
 	ctx, cancel := context.WithCancel(c.ctx)

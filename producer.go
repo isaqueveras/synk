@@ -63,7 +63,6 @@ func (p *producer) heartbeat(ctx context.Context) {
 			return
 		case <-ticker.C:
 			p.logger.InfoContext(ctx, "Heartbeat: total completed jobs",
-				slog.String("queue", p.config.queueName),
 				slog.Uint64("total_completed_jobs", p.totalWorkPerformed.Load()),
 				slog.Int64("active_jobs", int64(p.numJobsActive.Load())),
 			)

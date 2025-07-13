@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"database/sql"
 	"time"
 
 	"github.com/isaqueveras/synk/types"
@@ -22,6 +23,10 @@ type Storage interface {
 	// It takes the name of the queue, the kind of job, and the arguments as a byte slice.
 	// It returns a pointer to the job ID and an error if the insertion fails.
 	Insert(queue, kind string, args []byte) (*int64, error)
+
+	// InsertTx adds a new job to the specified queue with the given kind and arguments
+	// within the context of the provided transaction.
+	InsertTx(tx *sql.Tx, queue, kind string, args []byte) (*int64, error)
 
 	// UpdateJobState updates the state of a job identified by its ID.
 	// It takes the job ID, the new state, an optional finalized time, and an

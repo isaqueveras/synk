@@ -84,6 +84,15 @@ func (pg *postgres) Insert(queue, kind string, args []byte) (*int64, error) {
 	return id, nil
 }
 
+// InsertTx inserts a new job into the specified queue with the given kind and arguments
+// within the context of the provided transaction.
+// This allows the operation to be part of an atomic database transaction.
+func (pg *postgres) InsertTx(tx *sql.Tx, queue, kind string, args []byte) (*int64, error) {
+	ctx, cancel := context.WithTimeout(pg.ctx, pg.timeout)
+	defer cancel()
+	return pg.queries.Insert(ctx, tx, queue, kind, args)
+}
+
 // UpdateJobState updates the state, finalized_at, and error message of a job.
 func (pg *postgres) UpdateJobState(jobID int64, newState types.JobState, finalizedAt time.Time, e *types.AttemptError) error {
 	ctx, cancel := context.WithTimeout(pg.ctx, pg.timeout)

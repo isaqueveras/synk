@@ -34,7 +34,7 @@ func main() {
 		synk.WithQueue("ownership", &synk.QueueConfig{
 			MaxWorkers: 100,
 			TimeFetch:  time.Second / 10,
-			JobTimeout: time.Minute,
+			JobTimeout: time.Minute * 10,
 		}),
 
 		// Set storage configuration using PostgreSQL.
