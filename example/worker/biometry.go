@@ -9,18 +9,18 @@ import (
 	"github.com/isaqueveras/synk"
 )
 
-// BiometryArgs ...
+// BiometryArgs define struct for args biometry
 type BiometryArgs struct {
 	BiometryID string `json:"biometry_id"`
 	CustomerID string `json:"customer_id"`
 }
 
-// Kind ...
+// Kind define biometry kind
 func (BiometryArgs) Kind() string {
 	return "biometry"
 }
 
-// NewBiometry ...
+// NewBiometry create a new worker for biometry
 func NewBiometry() synk.Worker[BiometryArgs] {
 	return &biometryWorker{}
 }
@@ -31,9 +31,10 @@ type biometryWorker struct {
 }
 
 func (biometryWorker) Work(_ context.Context, job *synk.Job[BiometryArgs]) error {
-	now := time.Now()
-	time.Sleep(time.Second * time.Duration(rand.Intn(10)))
-	fmt.Printf("Kind: %v - BiometryID: %v - CustomerID: %v | latency: %f\n",
-		job.Args.Kind(), job.Args.BiometryID, job.Args.CustomerID, time.Since(now).Seconds())
+	sleep := time.Duration(rand.Intn(10))
+	if sleep < 3 {
+		return fmt.Errorf("error processing biometry job: %s", job.Args.BiometryID)
+	}
+	time.Sleep(time.Second * sleep)
 	return nil
 }

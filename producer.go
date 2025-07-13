@@ -114,7 +114,23 @@ func (p *producer) startWork(ctx context.Context, job *types.JobRow, work work) 
 	}
 
 	if err := work.work(ctx); err != nil {
-		panic(err)
+		errMsg := err.Error()
+		if err := p.storage.UpdateJobState(job.Id, types.JobStateRetryable, time.Now(), &types.AttemptError{
+			At:      time.Now(),
+			Attempt: job.Attempt,
+			Error:   errMsg,
+			Trace:   string(debug.Stack()),
+		}); err != nil {
+			p.logger.ErrorContext(ctx, fmt.Sprintf("Failed to update job %d to retryable: %v", job.Id, err))
+		}
+
+		p.logger.ErrorContext(ctx, "Job failed",
+			slog.Int64("job_id", job.Id),
+			slog.String("kind", job.Kind),
+			slog.String("args", string(job.Args)),
+			slog.String("error", errMsg),
+		)
+		return
 	}
 
 	if err := p.storage.UpdateJobState(job.Id, types.JobStateCompleted, time.Now(), nil); err != nil {

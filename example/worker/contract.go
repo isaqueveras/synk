@@ -30,9 +30,10 @@ type contractWorker struct {
 }
 
 func (w contractWorker) Work(_ context.Context, job *synk.Job[ContractArgs]) error {
-	now := time.Now()
-	time.Sleep(time.Second * time.Duration(rand.Intn(10)))
-	fmt.Printf("Kind: %v - CustomerID: %v - CustomerName: %v | latency: %f\n",
-		job.Args.Kind(), job.Args.CustomerID, job.Args.CustomerName, time.Since(now).Seconds())
+	sleep := time.Duration(rand.Intn(10))
+	if sleep < 3 {
+		return fmt.Errorf("error processing contract job: %s", job.Args.CustomerID)
+	}
+	time.Sleep(time.Second * sleep)
 	return nil
 }

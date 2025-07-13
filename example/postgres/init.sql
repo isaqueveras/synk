@@ -29,11 +29,10 @@ CREATE TABLE job(
 
   args jsonb,
   attempted_by text[],
-  errors jsonb[],
+  errors jsonb[] NOT NULL DEFAULT '{}'::jsonb[],
   kind text NOT NULL,
   metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
   queue text NOT NULL DEFAULT 'default'::text,
-  tags varchar(255)[],
 
   CONSTRAINT finalized_or_finalized_at_null CHECK ((state IN ('cancelled', 'completed', 'discarded') AND finalized_at IS NOT NULL) OR finalized_at IS NULL),
   CONSTRAINT max_attempts_is_positive CHECK (max_attempts > 0),

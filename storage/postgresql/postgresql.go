@@ -85,7 +85,7 @@ func (pg *postgres) Insert(queue, kind string, args []byte) (*int64, error) {
 }
 
 // UpdateJobState updates the state, finalized_at, and error message of a job.
-func (pg *postgres) UpdateJobState(jobID int64, newState types.JobState, finalizedAt time.Time, errorMsg *string) error {
+func (pg *postgres) UpdateJobState(jobID int64, newState types.JobState, finalizedAt time.Time, e *types.AttemptError) error {
 	ctx, cancel := context.WithTimeout(pg.ctx, pg.timeout)
 	defer cancel()
 
@@ -95,7 +95,7 @@ func (pg *postgres) UpdateJobState(jobID int64, newState types.JobState, finaliz
 	}
 	defer tx.Rollback()
 
-	if err = pg.queries.UpdateJobState(ctx, tx, jobID, newState, finalizedAt, errorMsg); err != nil {
+	if err = pg.queries.UpdateJobState(ctx, tx, jobID, newState, finalizedAt, e); err != nil {
 		return err
 	}
 

@@ -33,11 +33,24 @@ func main() {
 	var i int
 	for range time.NewTicker(time.Second).C {
 		i++
-		if _, err := client.Insert("ownership", worker.ContractArgs{
+		client.Insert("ownership", worker.ContractArgs{
 			CustomerID:   fmt.Sprintf("%d", i),
 			CustomerName: fmt.Sprintf("Nome do Cliente %d", i),
-		}); err != nil {
-			panic(err)
-		}
+		})
+
+		client.Insert("ownership", worker.BiometryArgs{
+			BiometryID: fmt.Sprintf("%d", i),
+			CustomerID: fmt.Sprintf("%d", i),
+		})
+
+		client.Insert("default", worker.BiometryArgs{
+			BiometryID: fmt.Sprintf("%d", i),
+			CustomerID: fmt.Sprintf("%d", i),
+		})
+
+		client.Insert("default", worker.ContractArgs{
+			CustomerID:   fmt.Sprintf("%d", i),
+			CustomerName: fmt.Sprintf("Nome do Cliente %d", i),
+		})
 	}
 }

@@ -3,6 +3,7 @@ package queries
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"time"
 
 	"github.com/isaqueveras/synk/types"
@@ -70,21 +71,20 @@ func (q *Queries) Insert(ctx context.Context, tx *sql.Tx, queue, kind string, ar
 	return id, err
 }
 
-const updateJobStateSQL = `
-UPDATE synk.job SET 
-	state = $1,
-	finalized_at = $2
-	-- errors = CASE WHEN $3::jsonb IS NOT NULL THEN array_append(errors, $3::jsonb) ELSE errors END 
-WHERE id = $3`
+const updateJobStateSQLNoError = `UPDATE synk.job SET state = $1, finalized_at = $2 WHERE id = $3`
+const updateJobStateSQLWithError = `UPDATE synk.job SET state = $1, errors = array_append(errors, $2::jsonb) WHERE id = $3`
 
 // UpdateJobState updates the state of a job identified by its ID in the database.
-func (q *Queries) UpdateJobState(ctx context.Context, tx *sql.Tx, jobID int64, newState types.JobState, finalizedAt time.Time, errorMsg *string) error {
-	// var errMsgJSON any = []byte("NULL")
-	// if errorMsg != nil {
-	// 	errMsgJSON = *errorMsg
-	// }
-	_ = errorMsg
-	_, err := tx.ExecContext(ctx, updateJobStateSQL, newState, finalizedAt, jobID)
+func (q *Queries) UpdateJobState(ctx context.Context, tx *sql.Tx, jobID int64, newState types.JobState, finalizedAt time.Time, e *types.AttemptError) error {
+	if e != nil {
+		errorJSON, err := json.Marshal(e)
+		if err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(ctx, updateJobStateSQLWithError, newState, errorJSON, jobID)
+		return err
+	}
+	_, err := tx.ExecContext(ctx, updateJobStateSQLNoError, newState, finalizedAt, jobID)
 	return err
 }
 
