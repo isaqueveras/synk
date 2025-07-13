@@ -3,6 +3,8 @@ package queries
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
+	"time"
 
 	"github.com/isaqueveras/synk/types"
 )
@@ -61,17 +63,56 @@ func (q *Queries) GetJobAvailable(ctx context.Context, tx *sql.Tx, queue string,
 	return jobs, nil
 }
 
-const insertSQL = `
-INSERT INTO job (queue, kind, args, max_attempts)
-VALUES ($1, $2, $3::jsonb, 3)
-RETURNING id`
+const insertSQL = "INSERT INTO synk.job (queue, kind, args, max_attempts) VALUES ($1, $2, $3::jsonb, 3) RETURNING id"
 
-// Insert ...
-func (q *Queries) Insert(ctx context.Context, tx *sql.Tx, queue, kind string, args []byte) error {
-	var id *int64
-	if err := tx.QueryRowContext(ctx, insertSQL, queue, kind, args).Scan(&id); err != nil {
+// Insert inserts a new job into the database with the specified queue, kind, and arguments.
+func (q *Queries) Insert(ctx context.Context, tx *sql.Tx, queue, kind string, args []byte) (id *int64, err error) {
+	err = tx.QueryRowContext(ctx, insertSQL, queue, kind, args).Scan(&id)
+	return id, err
+}
+
+const updateJobStateSQLNoError = `UPDATE synk.job SET state = $1, finalized_at = $2 WHERE id = $3`
+const updateJobStateSQLWithError = `UPDATE synk.job SET state = $1, errors = array_append(errors, $2::jsonb) WHERE id = $3`
+
+// UpdateJobState updates the state of a job identified by its ID in the database.
+func (q *Queries) UpdateJobState(ctx context.Context, tx *sql.Tx, jobID int64, newState types.JobState, finalizedAt time.Time, e *types.AttemptError) error {
+	if e != nil {
+		errorJSON, err := json.Marshal(e)
+		if err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(ctx, updateJobStateSQLWithError, newState, errorJSON, jobID)
 		return err
 	}
-	_ = id
-	return nil
+	_, err := tx.ExecContext(ctx, updateJobStateSQLNoError, newState, finalizedAt, jobID)
+	return err
+}
+
+const rescheduleJobSQL = "UPDATE synk.job SET scheduled_at = $1, attempt = $2 WHERE id = $3"
+
+// RescheduleJob updates the scheduled_at and attempt fields for a job in the database.
+func (q *Queries) RescheduleJob(ctx context.Context, tx *sql.Tx, jobID int64, scheduledAt time.Time, attempt int) error {
+	_, err := tx.ExecContext(ctx, rescheduleJobSQL, scheduledAt, attempt, jobID)
+	return err
+}
+
+const listJobsByStateSQL = `SELECT id, attempt, attempted_at, kind, queue, args, state FROM synk.job WHERE state = $1`
+
+// ListJobsByState retrieves all jobs with a given state from the database.
+func (q *Queries) ListJobsByState(ctx context.Context, tx *sql.Tx, state string) (jobs []*types.JobRow, err error) {
+	rows, err := tx.QueryContext(ctx, listJobsByStateSQL, state)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var job types.JobRow
+		if err = rows.Scan(&job.Id, &job.Attempt, &job.AttemptAt, &job.Kind, &job.Queue, &job.Args, &job.State); err != nil {
+			return nil, err
+		}
+		jobs = append(jobs, &job)
+	}
+
+	return jobs, rows.Err()
 }
