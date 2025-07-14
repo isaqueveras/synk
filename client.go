@@ -9,6 +9,7 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"sync"
 	"time"
@@ -70,11 +71,11 @@ type Client interface {
 	Stop()
 
 	// Insert add a job into the queue to be processed.
-	Insert(queue string, params JobArgs) (*int64, error)
+	Insert(queue string, params JobArgs, opts ...*types.InsertOptions) (*int64, error)
 
 	// InsertTx adds a job into the specified queue within the context of the provided
 	// transaction, allowing the operation to be part of an atomic database transaction.
-	InsertTx(tx *sql.Tx, queue string, params JobArgs) (*int64, error)
+	InsertTx(tx *sql.Tx, queue string, params JobArgs, opts ...*types.InsertOptions) (*int64, error)
 }
 
 // NewClient creates a new instance of worker with the provided context and options.
@@ -122,6 +123,7 @@ func NewClient(ctx context.Context, opts ...Option) Client {
 	for queue, config := range clt.cfg.queues {
 		logger := clt.cfg.logger.WithGroup("producer").With(slog.String("queue", queue))
 		clt.producers[queue] = &producer{
+			clientID:    &clt.id,
 			logger:      logger,
 			workers:     clt.cfg.workers,
 			storage:     clt.cfg.storage,
@@ -157,58 +159,87 @@ func (c *IClient) Stop() {
 }
 
 // Insert add a job into the queue to be processed.
-func (c *IClient) Insert(queue string, params JobArgs) (*int64, error) {
+func (c *IClient) Insert(queue string, params JobArgs, options ...*types.InsertOptions) (*int64, error) {
 	args, err := json.Marshal(params)
 	if err != nil {
 		return nil, err
 	}
 
-	id, err := c.cfg.storage.Insert(queue, params.Kind(), args)
-	if err != nil {
-		c.cfg.logger.ErrorContext(c.ctx, "failed to insert job into queue",
-			slog.String("error", err.Error()),
-			slog.String("queue", queue),
-			slog.String("kind", params.Kind()),
-			slog.Any("args", params),
-		)
+	opts := &types.InsertOptions{}
+	if len(options) > 0 {
+		opts = options[0]
+	}
+
+	if opts.Priority == 0 {
+		opts.Priority = 4
+	}
+
+	if opts.Priority > 4 {
+		return nil, errors.New("priority must be between 1 and 4")
+	}
+
+	state := types.JobStateAvailable
+	if !opts.ScheduledAt.IsZero() {
+		state = types.JobStateScheduled
+	}
+
+	if opts.ScheduledAt.IsZero() || opts.ScheduledAt.Before(time.Now()) {
+		opts.ScheduledAt = time.Now().UTC()
+	}
+
+	if opts.MaxRetries == 0 {
+		opts.MaxRetries = 7
+	}
+
+	if opts.Pending {
+		state = types.JobStatePending
+	}
+
+	job := &types.JobRow{
+		Kind:    params.Kind(),
+		Queue:   queue,
+		Args:    args,
+		State:   state,
+		Options: opts,
+	}
+
+	var jobID *int64
+	if jobID, err = c.cfg.storage.Insert(job); err != nil {
+		c.cfg.logger.ErrorContext(c.ctx, "failed to insert job into queue", slog.String("error", err.Error()),
+			slog.String("queue", queue), slog.String("kind", params.Kind()), slog.Any("args", params))
 		return nil, err
 	}
 
-	c.cfg.logger.DebugContext(c.ctx, "job inserted into queue",
-		slog.String("queue", queue),
-		slog.Int64("job_id", *id),
-		slog.String("kind", params.Kind()),
-		slog.Any("args", params),
-	)
+	c.cfg.logger.DebugContext(c.ctx, "job inserted into queue", slog.String("queue", queue),
+		slog.Int64("job_id", *jobID), slog.String("kind", params.Kind()), slog.Any("args", params))
 
-	return id, nil
+	return jobID, nil
 }
 
 // InsertTx adds a job into the specified queue within the context of the provided
 // transaction, allowing the operation to be part of an atomic database transaction.
-func (c *IClient) InsertTx(tx *sql.Tx, queue string, params JobArgs) (*int64, error) {
+func (c *IClient) InsertTx(tx *sql.Tx, queue string, params JobArgs, options ...*types.InsertOptions) (*int64, error) {
 	args, err := json.Marshal(params)
 	if err != nil {
 		return nil, err
 	}
 
-	id, err := c.cfg.storage.InsertTx(tx, queue, params.Kind(), args)
+	jobRow := &types.JobRow{
+		Kind:  params.Kind(),
+		Queue: queue,
+		Args:  args,
+		State: types.JobStateAvailable,
+	}
+
+	id, err := c.cfg.storage.InsertTx(tx, jobRow)
 	if err != nil {
-		c.cfg.logger.ErrorContext(c.ctx, "failed to insert job into queue within transaction",
-			slog.String("error", err.Error()),
-			slog.String("queue", queue),
-			slog.String("kind", params.Kind()),
-			slog.Any("args", params),
-		)
+		c.cfg.logger.ErrorContext(c.ctx, "failed to insert job into queue within transaction", slog.String("error", err.Error()),
+			slog.String("queue", queue), slog.String("kind", params.Kind()), slog.Any("args", params))
 		return nil, err
 	}
 
-	c.cfg.logger.DebugContext(c.ctx, "job inserted into queue within transaction",
-		slog.String("queue", queue),
-		slog.Int64("job_id", *id),
-		slog.String("kind", params.Kind()),
-		slog.Any("args", params),
-	)
+	c.cfg.logger.DebugContext(c.ctx, "job inserted into queue within transaction", slog.String("queue", queue),
+		slog.Int64("job_id", *id), slog.String("kind", params.Kind()), slog.Any("args", params))
 
 	return id, nil
 }

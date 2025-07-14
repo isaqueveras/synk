@@ -15,6 +15,28 @@ type JobRow struct {
 	Args      []byte
 	State     JobState
 	Errors    []AttemptError
+	Options   *InsertOptions
+}
+
+// InsertOptions represents options for inserting a job into the queue.
+type InsertOptions struct {
+	// ScheduledAt is the time at which the job should be scheduled to run.
+	ScheduledAt time.Time
+
+	// Priority is the priority of the job, which can be used to determine the order
+	// in which jobs are processed. Higher values indicate higher priority.
+	Priority int
+
+	// Pending indicates whether the job is pending execution.
+	// If true, the job is considered pending and will not be executed until it is marked
+	// as ready. If false, the job is ready to be executed.
+	Pending bool
+
+	// Retryable indicates whether the job can be retried if it fails.
+	Retryable bool
+
+	// MaxRetries is the maximum number of times the job can be retried if it fails.
+	MaxRetries int
 }
 
 // JobState represents the status of a job.
@@ -28,6 +50,7 @@ const (
 	JobStateRetryable JobState = "retryable"
 	JobStateRunning   JobState = "running"
 	JobStateScheduled JobState = "scheduled"
+	JobStatePending   JobState = "pending"
 )
 
 // AttemptError represents an error that occurred during a job attempt.

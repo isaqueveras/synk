@@ -10,9 +10,12 @@ import (
 
 	"github.com/isaqueveras/synk/storage"
 	"github.com/isaqueveras/synk/types"
+	"github.com/oklog/ulid/v2"
 )
 
 type producer struct {
+	clientID *ulid.ULID
+
 	logger      *slog.Logger
 	jobsChannel chan *types.JobRow
 	config      *producerConfig
@@ -37,7 +40,7 @@ type producerConfig struct {
 
 func (p *producer) process(ctx context.Context, jobs chan []*types.JobRow) {
 	limit := int32(p.config.maxWorkerCount) - p.numJobsActive.Load()
-	go p.getJobAvailable(jobs, limit)
+	go p.getJobAvailable(jobs, limit, p.clientID)
 	for {
 		select {
 		case jobs := <-jobs:
@@ -156,8 +159,8 @@ func (p *producer) handleWorkerDone(job *types.JobRow) {
 	p.jobsChannel <- job
 }
 
-func (p *producer) getJobAvailable(jobs chan<- []*types.JobRow, limit int32) {
-	items, err := p.storage.GetJobAvailable(p.config.queueName, limit)
+func (p *producer) getJobAvailable(jobs chan<- []*types.JobRow, limit int32, clientID *ulid.ULID) {
+	items, err := p.storage.GetJobAvailable(p.config.queueName, limit, clientID)
 	if err != nil {
 		panic(err)
 	}

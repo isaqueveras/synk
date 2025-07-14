@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/isaqueveras/synk/types"
+
+	"github.com/oklog/ulid/v2"
 )
 
 // Queries represents a collection of methods to interact with the PostgreSQL database.
@@ -23,8 +25,9 @@ WITH jobs AS (
   SELECT id, args, kind
   FROM synk.job
   WHERE state = 'available' AND queue = $1::TEXT
+		AND scheduled_at <= COALESCE($4::TIMESTAMPTZ, NOW())
   ORDER BY priority ASC, scheduled_at ASC, id ASC
-  LIMIT $2::integer
+  LIMIT $2::INTEGER
   FOR UPDATE SKIP LOCKED
 ) UPDATE synk.job SET
   state = 'running',
@@ -36,8 +39,8 @@ WHERE job.id = jobs.id
 RETURNING job.id, job.args, job.kind`
 
 // GetJobAvailable retrieves available jobs from the database and updates their state to 'running'.
-func (q *Queries) GetJobAvailable(ctx context.Context, tx *sql.Tx, queue string, limit int32) ([]*types.JobRow, error) {
-	rows, err := tx.QueryContext(ctx, getJobAvailableSQL, queue, limit, "01JK7753BK0C8PY75K0JVXFYY0")
+func (q *Queries) GetJobAvailable(ctx context.Context, tx *sql.Tx, queue string, limit int32, clientID *ulid.ULID) ([]*types.JobRow, error) {
+	rows, err := tx.QueryContext(ctx, getJobAvailableSQL, queue, limit, clientID.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -63,12 +66,19 @@ func (q *Queries) GetJobAvailable(ctx context.Context, tx *sql.Tx, queue string,
 	return jobs, nil
 }
 
-const insertSQL = "INSERT INTO synk.job (queue, kind, args, max_attempts) VALUES ($1, $2, $3::jsonb, 3) RETURNING id"
+const insertSQL = `
+INSERT INTO synk.job (queue, kind, args, max_attempts, state, scheduled_at) 
+VALUES ($1, $2, $3::jsonb, $4, $5, $6) RETURNING id`
 
 // Insert inserts a new job into the database with the specified queue, kind, and arguments.
-func (q *Queries) Insert(ctx context.Context, tx *sql.Tx, queue, kind string, args []byte) (id *int64, err error) {
-	err = tx.QueryRowContext(ctx, insertSQL, queue, kind, args).Scan(&id)
-	return id, err
+func (q *Queries) Insert(ctx context.Context, tx *sql.Tx, params *types.JobRow) (id *int64, err error) {
+	if err = tx.
+		QueryRowContext(ctx, insertSQL, params.Queue, params.Kind, params.Args, params.Options.MaxRetries,
+			params.State, params.Options.ScheduledAt).
+		Scan(&id); err != nil {
+		return nil, err
+	}
+	return id, nil
 }
 
 const updateJobStateSQLNoError = `UPDATE synk.job SET state = $1, finalized_at = $2 WHERE id = $3`
