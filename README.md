@@ -1,2 +1,2 @@
 # synk
-🔗 Synk is a lightweight and efficient framework for building workers in Golang
+Synk is a lightweight and efficient for background jobs in Golang & PostgreSQL.
