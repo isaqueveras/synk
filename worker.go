@@ -9,8 +9,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"time"
-
-	"github.com/isaqueveras/synk/types"
 )
 
 // Job represents a job to be processed by a worker. It is a generic type that
@@ -20,7 +18,7 @@ import (
 type Job[T JobArgs] struct {
 	// A pointer to a JobRow struct from the types package,
 	// which contains metadata about the job.
-	*types.JobRow
+	*JobRow
 
 	// Args arguments required to process the job, of type T.
 	Args T
@@ -57,7 +55,7 @@ type work interface {
 
 // workUnit is an interface that defines the creation of workUnit instances.
 type workUnit interface {
-	makeWork(*types.JobRow) work
+	makeWork(*JobRow) work
 }
 
 // workerInfo holds information about a worker's job.
@@ -91,7 +89,7 @@ func newWorkWrapper[T JobArgs](w Worker[T]) workUnit {
 
 // makeWork initializes and returns a new work unit for the given job row.
 // It wraps the job row and associates it with the worker.
-func (w *workWrapper[T]) makeWork(row *types.JobRow) work {
+func (w *workWrapper[T]) makeWork(row *JobRow) work {
 	return &wrapperWorkUnit[T]{row: row, worker: w.worker}
 }
 
@@ -100,7 +98,7 @@ func (w *workWrapper[T]) makeWork(row *types.JobRow) work {
 // T represents the type parameter that must satisfy the JobArgs constraint.
 type wrapperWorkUnit[T JobArgs] struct {
 	job    *Job[T]
-	row    *types.JobRow
+	row    *JobRow
 	worker Worker[T]
 }
 
@@ -129,7 +127,7 @@ func (w *wrapperWorkUnit[T]) timeout() time.Duration {
 func (w *wrapperWorkUnit[T]) unmarshal() error {
 	w.job = &Job[T]{JobRow: w.row}
 	if w.row != nil && w.row.Args == nil {
-		return fmt.Errorf("Args is nil for job %d", w.row.Id)
+		return fmt.Errorf("args is nil for job %d", w.row.ID)
 	}
 	return json.Unmarshal(w.row.Args, &w.job.Args)
 }

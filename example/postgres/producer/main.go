@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"database/sql"
-	"fmt"
 	"log/slog"
 	"os"
 	"time"
@@ -25,54 +24,29 @@ func main() {
 	}
 	defer db.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute*5)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 
 	logg := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
 	client := synk.NewClient(ctx, synk.WithStorage(postgresql.New(db)), synk.WithLogger(logg))
-	defer client.Stop()
+	defer client.Shutdown()
 
-	if err := withTransaction(client, db); err != nil {
-		panic(err)
+	{ // Insert a job into the queue to be processed later
+		arg := worker.BiometryArgs{
+			BiometryID: "31GDRF8K0C8PY75K0JVXFYY0",
+			CustomerID: "01JK7753BK0C8PY75K0JVXFYY0",
+		}
+
+		opts := &synk.InsertOptions{
+			ScheduledAt: time.Now().Add(time.Minute * 2),
+			MaxRetries:  2,
+			// Pending:     true,
+			Priority: synk.PriorityMedium,
+		}
+
+		if _, err = client.Insert("ownership", arg, opts); err != nil {
+			panic(err)
+		}
 	}
-
-	var i int
-	for range time.NewTicker(time.Second).C {
-		i++
-
-		client.Insert("default", worker.ContractArgs{
-			CustomerID:   fmt.Sprintf("%d", i),
-			CustomerName: fmt.Sprintf("Customer Name %d-tx", i),
-		})
-
-		client.Insert("default", worker.BiometryArgs{
-			BiometryID: fmt.Sprintf("%d", i),
-			CustomerID: fmt.Sprintf("%d", i),
-		})
-	}
-}
-
-func withTransaction(client synk.Client, db *sql.DB) error {
-	tx, err := db.BeginTx(context.Background(), nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-
-	if _, err = client.InsertTx(tx, "ownership", worker.ContractArgs{
-		CustomerID:   "01JK7753BK0C8PY75K0JVXFYY0",
-		CustomerName: "John Doe",
-	}); err != nil {
-		return err
-	}
-
-	if _, err = client.InsertTx(tx, "ownership", worker.BiometryArgs{
-		BiometryID: "31GDRF8K0C8PY75K0JVXFYY0",
-		CustomerID: "01JK7753BK0C8PY75K0JVXFYY0",
-	}); err != nil {
-		return err
-	}
-
-	return tx.Commit()
 }

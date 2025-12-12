@@ -9,9 +9,9 @@ CREATE TYPE job_state AS ENUM(
   'cancelled',
   'completed',
   'discarded',
-  'retryable',
   'running',
-  'scheduled'
+  'scheduled',
+  'pending'
 );
 
 CREATE TABLE job(
