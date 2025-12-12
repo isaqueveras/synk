@@ -14,15 +14,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/isaqueveras/synk/storage"
-	"github.com/isaqueveras/synk/types"
-
 	"github.com/oklog/ulid/v2"
 )
 
-// IClient represents a client that manages the configuration,
+// client represents a client that manages the configuration,
 // context, and producers for a specific task.
-type IClient struct {
+type client struct {
 	id  ulid.ULID
 	cfg *config
 	wg  sync.WaitGroup
@@ -37,7 +34,7 @@ type IClient struct {
 type config struct {
 	queues  map[string]*QueueConfig
 	workers map[string]*workerInfo
-	storage storage.Storage
+	storage Storage
 	logger  *slog.Logger
 }
 
@@ -62,27 +59,25 @@ type QueueConfig struct {
 // Client defines the interface for a Client that can start and stop processing jobs.
 // It includes methods to start and stop the Client, which manages job queues and workers.
 type Client interface {
-	// Exec begins the processing of jobs by the client.
-	// It initializes the necessary context and starts the producers for each queue.
-	Exec()
+	// InitProducers begins the processing of jobs by the client.
+	ProcessJobs()
 
-	// Stop halts the processing of jobs by the client.
-	// It cancels the context and stops all producers.
-	Stop()
+	// Shutdown halts the processing of jobs by the client.
+	Shutdown()
 
 	// Insert add a job into the queue to be processed.
-	Insert(queue string, params JobArgs, opts ...*types.InsertOptions) (*int64, error)
+	Insert(queue string, params JobArgs, opts ...*InsertOptions) (*int64, error)
 
 	// InsertTx adds a job into the specified queue within the context of the provided
 	// transaction, allowing the operation to be part of an atomic database transaction.
-	InsertTx(tx *sql.Tx, queue string, params JobArgs, opts ...*types.InsertOptions) (*int64, error)
+	InsertTx(tx *sql.Tx, queue string, params JobArgs, opts ...*InsertOptions) (*int64, error)
 }
 
 // NewClient creates a new instance of worker with the provided context and options.
 // It initializes the client's configuration, queues, and workers. If no queues or workers are
 // configured, it panics. It also generates a unique client ID and sets up producers for each queue.
 func NewClient(ctx context.Context, opts ...Option) Client {
-	clt := &IClient{
+	clt := &client{
 		ctx:       ctx,
 		producers: make(map[string]*producer),
 		cfg: &config{
@@ -128,7 +123,7 @@ func NewClient(ctx context.Context, opts ...Option) Client {
 			workers:     clt.cfg.workers,
 			storage:     clt.cfg.storage,
 			jobTimeout:  config.JobTimeout,
-			jobsChannel: make(chan *types.JobRow, config.MaxWorkers),
+			jobsChannel: make(chan *JobRow, config.MaxWorkers),
 			config: &producerConfig{
 				maxWorkerCount: config.MaxWorkers,
 				timeFetch:      config.TimeFetch,
@@ -143,10 +138,9 @@ func NewClient(ctx context.Context, opts ...Option) Client {
 	return clt
 }
 
-// Stop cancels the client's context and stops any ongoing work.
-// It calls the cancel functions associated with the client to
-// gracefully shut down any operations.
-func (c *IClient) Stop() {
+// Shutdown cancels the client's context and stops any ongoing work.
+// It calls the cancel functions associated with the client to gracefully shut down any operations.
+func (c *client) Shutdown() {
 	c.cfg.logger.Debug("Stopping client")
 	if c.cancel != nil {
 		c.cfg.logger.Debug("Stopping client context")
@@ -159,53 +153,28 @@ func (c *IClient) Stop() {
 }
 
 // Insert add a job into the queue to be processed.
-func (c *IClient) Insert(queue string, params JobArgs, options ...*types.InsertOptions) (*int64, error) {
+func (c *client) Insert(queue string, params JobArgs, options ...*InsertOptions) (*int64, error) {
+	state, option, err := getOptionsOrDefault(options...)
+	if err != nil {
+		return nil, err
+	}
+
 	args, err := json.Marshal(params)
 	if err != nil {
 		return nil, err
 	}
 
-	opts := &types.InsertOptions{}
-	if len(options) > 0 {
-		opts = options[0]
-	}
-
-	if opts.Priority == 0 {
-		opts.Priority = 4
-	}
-
-	if opts.Priority > 4 {
-		return nil, errors.New("priority must be between 1 and 4")
-	}
-
-	state := types.JobStateAvailable
-	if !opts.ScheduledAt.IsZero() {
-		state = types.JobStateScheduled
-	}
-
-	if opts.ScheduledAt.IsZero() || opts.ScheduledAt.Before(time.Now()) {
-		opts.ScheduledAt = time.Now().UTC()
-	}
-
-	if opts.MaxRetries == 0 {
-		opts.MaxRetries = 7
-	}
-
-	if opts.Pending {
-		state = types.JobStatePending
-	}
-
-	job := &types.JobRow{
+	row := &JobRow{
 		Kind:    params.Kind(),
 		Queue:   queue,
 		Args:    args,
 		State:   state,
-		Options: opts,
+		Options: option,
 	}
 
 	var jobID *int64
-	if jobID, err = c.cfg.storage.Insert(job); err != nil {
-		c.cfg.logger.ErrorContext(c.ctx, "failed to insert job into queue", slog.String("error", err.Error()),
+	if jobID, err = c.cfg.storage.Insert(row); err != nil {
+		c.cfg.logger.DebugContext(c.ctx, "failed to insert job into queue", slog.String("error", err.Error()),
 			slog.String("queue", queue), slog.String("kind", params.Kind()), slog.Any("args", params))
 		return nil, err
 	}
@@ -218,22 +187,25 @@ func (c *IClient) Insert(queue string, params JobArgs, options ...*types.InsertO
 
 // InsertTx adds a job into the specified queue within the context of the provided
 // transaction, allowing the operation to be part of an atomic database transaction.
-func (c *IClient) InsertTx(tx *sql.Tx, queue string, params JobArgs, options ...*types.InsertOptions) (*int64, error) {
-	args, err := json.Marshal(params)
+func (c *client) InsertTx(tx *sql.Tx, queue string, params JobArgs, options ...*InsertOptions) (id *int64, err error) {
+	state, option, err := getOptionsOrDefault(options...)
 	if err != nil {
 		return nil, err
 	}
 
-	jobRow := &types.JobRow{
-		Kind:  params.Kind(),
-		Queue: queue,
-		Args:  args,
-		State: types.JobStateAvailable,
+	row := &JobRow{
+		Kind:    params.Kind(),
+		Queue:   queue,
+		State:   state,
+		Options: option,
 	}
 
-	id, err := c.cfg.storage.InsertTx(tx, jobRow)
-	if err != nil {
-		c.cfg.logger.ErrorContext(c.ctx, "failed to insert job into queue within transaction", slog.String("error", err.Error()),
+	if row.Args, err = json.Marshal(params); err != nil {
+		return nil, err
+	}
+
+	if id, err = c.cfg.storage.InsertTx(tx, row); err != nil {
+		c.cfg.logger.DebugContext(c.ctx, "failed to insert job into queue within transaction", slog.String("error", err.Error()),
 			slog.String("queue", queue), slog.String("kind", params.Kind()), slog.Any("args", params))
 		return nil, err
 	}
@@ -244,11 +216,11 @@ func (c *IClient) InsertTx(tx *sql.Tx, queue string, params JobArgs, options ...
 	return id, nil
 }
 
-// Exec it initializes the client's context and starts the producers for each queue.
+// ProcessJobs it initializes the client's context and starts the producers for each queue.
 // Each producer runs in a separate goroutine, fetching and processing jobs according to its configuration.
 // The method waits for all producers to complete their work before returning.
 // It also sets up a heartbeat mechanism to log the total number of completed jobs at regular intervals.
-func (c *IClient) Exec() {
+func (c *client) ProcessJobs() {
 	c.ctx, c.cancel = context.WithCancel(c.ctx)
 
 	ctx, cancel := context.WithCancel(c.ctx)
@@ -264,7 +236,7 @@ func (c *IClient) Exec() {
 			// starts a heartbeat goroutine for each producer to monitor their status.
 			go producer.heartbeat(c.ctx)
 
-			jobs := make(chan []*types.JobRow)
+			jobs := make(chan []*JobRow)
 			for {
 				select {
 				case <-c.ctx.Done():
@@ -280,7 +252,6 @@ func (c *IClient) Exec() {
 					}
 				case <-producer.jobsChannel:
 					producer.numJobsActive.Add(-1)
-					producer.totalWorkPerformed.Add(1)
 				}
 			}
 		}()
@@ -293,4 +264,38 @@ func (c *IClient) Exec() {
 	)
 
 	c.wg.Wait()
+}
+
+func getOptionsOrDefault(options ...*InsertOptions) (JobState, *InsertOptions, error) {
+	opts := &InsertOptions{}
+	if len(options) > 0 {
+		opts = options[0]
+	}
+
+	if opts.Priority == 0 {
+		opts.Priority = 4
+	}
+
+	state := JobStateAvailable
+	if !opts.ScheduledAt.IsZero() {
+		state = JobStateScheduled
+	}
+
+	if opts.Priority > 4 {
+		return state, nil, errors.New("priority must be between 1 and 4")
+	}
+
+	if opts.ScheduledAt.IsZero() || opts.ScheduledAt.Before(time.Now()) {
+		opts.ScheduledAt = time.Now().UTC()
+	}
+
+	if opts.MaxRetries == 0 {
+		opts.MaxRetries = 7
+	}
+
+	if opts.Pending {
+		state = JobStatePending
+	}
+
+	return state, opts, nil
 }

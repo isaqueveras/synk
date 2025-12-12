@@ -8,8 +8,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/isaqueveras/synk/storage"
-	"github.com/isaqueveras/synk/types"
 	"github.com/oklog/ulid/v2"
 )
 
@@ -17,16 +15,15 @@ type producer struct {
 	clientID *ulid.ULID
 
 	logger      *slog.Logger
-	jobsChannel chan *types.JobRow
+	jobsChannel chan *JobRow
 	config      *producerConfig
-	storage     storage.Storage
+	storage     Storage
 	workers     map[string]*workerInfo
 
-	jobTimeout         time.Duration
-	numJobsActive      atomic.Int32
-	totalWorkPerformed atomic.Uint64
+	jobTimeout    time.Duration
+	numJobsActive atomic.Int32
 
-	done func(*types.JobRow)
+	done func(*JobRow)
 }
 
 type producerConfig struct {
@@ -38,9 +35,10 @@ type producerConfig struct {
 	timeFetch      time.Duration
 }
 
-func (p *producer) process(ctx context.Context, jobs chan []*types.JobRow) {
+func (p *producer) process(ctx context.Context, jobs chan []*JobRow) {
 	limit := int32(p.config.maxWorkerCount) - p.numJobsActive.Load()
 	go p.getJobAvailable(jobs, limit, p.clientID)
+
 	for {
 		select {
 		case jobs := <-jobs:
@@ -50,7 +48,6 @@ func (p *producer) process(ctx context.Context, jobs chan []*types.JobRow) {
 			return
 		case <-p.jobsChannel:
 			p.numJobsActive.Add(-1)
-			p.totalWorkPerformed.Add(1)
 		}
 	}
 }
@@ -65,15 +62,12 @@ func (p *producer) heartbeat(ctx context.Context) {
 			p.logger.ErrorContext(ctx, "Heartbeat context done: "+ctx.Err().Error())
 			return
 		case <-ticker.C:
-			p.logger.InfoContext(ctx, "Heartbeat: total completed jobs",
-				slog.Uint64("total_completed_jobs", p.totalWorkPerformed.Load()),
-				slog.Int64("active_jobs", int64(p.numJobsActive.Load())),
-			)
+			p.logger.InfoContext(ctx, "Heartbeat: total completed jobs", slog.Int64("active_jobs", int64(p.numJobsActive.Load())))
 		}
 	}
 }
 
-func (p *producer) start(ctx context.Context, jobs []*types.JobRow) {
+func (p *producer) start(ctx context.Context, jobs []*JobRow) {
 	for _, job := range jobs {
 		var work work
 		if info, ok := p.workers[job.Kind]; ok {
@@ -81,8 +75,7 @@ func (p *producer) start(ctx context.Context, jobs []*types.JobRow) {
 		}
 
 		if work == nil {
-			p.logger.ErrorContext(ctx, "Worker not defined for this type",
-				slog.Int64("job_id", job.Id), slog.String("kind", job.Kind))
+			p.logger.ErrorContext(ctx, "Worker not defined for this type", slog.Int64("job_id", job.ID), slog.String("kind", job.Kind))
 			return
 		}
 
@@ -93,10 +86,10 @@ func (p *producer) start(ctx context.Context, jobs []*types.JobRow) {
 	}
 }
 
-func (p *producer) startWork(ctx context.Context, job *types.JobRow, work work) {
+func (p *producer) startWork(ctx context.Context, job *JobRow, work work) {
 	defer func() {
 		if r := recover(); r != nil {
-			p.logger.ErrorContext(ctx, "PANIC:", r, fmt.Sprintf("\n%s", string(debug.Stack())))
+			p.logger.ErrorContext(ctx, string(debug.Stack()))
 		}
 	}()
 
@@ -116,38 +109,41 @@ func (p *producer) startWork(ctx context.Context, job *types.JobRow, work work) 
 	}
 
 	if err := work.work(ctx); err != nil {
-		errMsg := err.Error()
-		if err := p.storage.UpdateJobState(job.Id, types.JobStateRetryable, time.Now(), &types.AttemptError{
+		msg := err.Error()
+		attempt := &AttemptError{
 			At:      time.Now(),
 			Attempt: job.Attempt,
-			Error:   errMsg,
+			Error:   msg,
 			Trace:   string(debug.Stack()),
-		}); err != nil {
-			p.logger.ErrorContext(ctx, fmt.Sprintf("Failed to update job %d to retryable: %v", job.Id, err))
 		}
 
-		p.logger.ErrorContext(ctx, "Job failed",
-			slog.Int64("job_id", job.Id),
-			slog.String("kind", job.Kind),
-			slog.String("args", string(job.Args)),
-			slog.String("error", errMsg),
-		)
+		state := JobStateAvailable
+		if job.Attempt >= job.Options.MaxRetries {
+			state = JobStateCancelled
+		}
+
+		if err := p.storage.UpdateJobState(job.ID, state, time.Now(), attempt); err != nil {
+			p.logger.DebugContext(ctx, fmt.Sprintf("Failed to update job %d to retryable: %v", job.ID, err))
+		}
+
+		p.logger.DebugContext(ctx, "Job failed", slog.Int64("job_id", job.ID), slog.String("kind", job.Kind),
+			slog.String("args", string(job.Args)), slog.String("error", msg))
 		return
 	}
 
-	if err := p.storage.UpdateJobState(job.Id, types.JobStateCompleted, time.Now(), nil); err != nil {
-		p.logger.ErrorContext(ctx, fmt.Sprintf("Failed to update job %d to completed: %v", job.Id, err))
+	if err := p.storage.UpdateJobState(job.ID, JobStateCompleted, time.Now(), nil); err != nil {
+		p.logger.DebugContext(ctx, fmt.Sprintf("Failed to update job %d to completed: %v", job.ID, err))
 	}
 
 	p.logger.DebugContext(ctx, "Job completed",
-		slog.Int64("job_id", job.Id),
+		slog.Int64("job_id", job.ID),
 		slog.String("kind", job.Kind),
 		slog.String("args", string(job.Args)),
 	)
 
 	select {
 	case <-ctx.Done():
-		p.logger.ErrorContext(ctx, "Context done: "+ctx.Err().Error())
+		p.logger.DebugContext(ctx, "Context done: "+ctx.Err().Error())
 		return
 	default:
 	}
@@ -155,11 +151,11 @@ func (p *producer) startWork(ctx context.Context, job *types.JobRow, work work) 
 	p.handleWorkerDone(job)
 }
 
-func (p *producer) handleWorkerDone(job *types.JobRow) {
+func (p *producer) handleWorkerDone(job *JobRow) {
 	p.jobsChannel <- job
 }
 
-func (p *producer) getJobAvailable(jobs chan<- []*types.JobRow, limit int32, clientID *ulid.ULID) {
+func (p *producer) getJobAvailable(jobs chan<- []*JobRow, limit int32, clientID *ulid.ULID) {
 	items, err := p.storage.GetJobAvailable(p.config.queueName, limit, clientID)
 	if err != nil {
 		panic(err)

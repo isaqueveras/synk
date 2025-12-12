@@ -5,16 +5,15 @@ import (
 	"database/sql"
 	"time"
 
-	"github.com/isaqueveras/synk/storage"
+	"github.com/isaqueveras/synk"
 	"github.com/isaqueveras/synk/storage/postgresql/queries"
-	"github.com/isaqueveras/synk/types"
 
 	"github.com/oklog/ulid/v2"
 )
 
 // New creates a new instance of the storage repository using the provided
 // database connection. It returns an implementation of the storage.Storage interface.
-func New(db *sql.DB, timeouts ...time.Duration) storage.Storage {
+func New(db *sql.DB, timeouts ...time.Duration) synk.Storage {
 	timeout := time.Second * 5
 	if len(timeouts) != 0 {
 		timeout = timeouts[0]
@@ -42,7 +41,7 @@ func (pg *postgres) Ping() error {
 }
 
 // GetJobAvailable retrieves a list of available jobs from the specified queue with a limit on the number of jobs.
-func (pg *postgres) GetJobAvailable(queue string, limit int32, clientID *ulid.ULID) (items []*types.JobRow, err error) {
+func (pg *postgres) GetJobAvailable(queue string, limit int32, clientID *ulid.ULID) (items []*synk.JobRow, err error) {
 	ctx, cancel := context.WithTimeout(pg.ctx, pg.timeout)
 	defer cancel()
 
@@ -64,7 +63,7 @@ func (pg *postgres) GetJobAvailable(queue string, limit int32, clientID *ulid.UL
 }
 
 // Insert inserts a new job into the specified queue with the given kind and arguments.
-func (pg *postgres) Insert(params *types.JobRow) (*int64, error) {
+func (pg *postgres) Insert(params *synk.JobRow) (*int64, error) {
 	ctx, cancel := context.WithTimeout(pg.ctx, pg.timeout)
 	defer cancel()
 
@@ -89,14 +88,14 @@ func (pg *postgres) Insert(params *types.JobRow) (*int64, error) {
 // InsertTx inserts a new job into the specified queue with the given kind and arguments
 // within the context of the provided transaction.
 // This allows the operation to be part of an atomic database transaction.
-func (pg *postgres) InsertTx(tx *sql.Tx, params *types.JobRow) (*int64, error) {
+func (pg *postgres) InsertTx(tx *sql.Tx, params *synk.JobRow) (*int64, error) {
 	ctx, cancel := context.WithTimeout(pg.ctx, pg.timeout)
 	defer cancel()
 	return pg.queries.Insert(ctx, tx, params)
 }
 
 // UpdateJobState updates the state, finalized_at, and error message of a job.
-func (pg *postgres) UpdateJobState(jobID int64, newState types.JobState, finalizedAt time.Time, e *types.AttemptError) error {
+func (pg *postgres) UpdateJobState(jobID int64, newState synk.JobState, finalizedAt time.Time, e *synk.AttemptError) error {
 	ctx, cancel := context.WithTimeout(pg.ctx, pg.timeout)
 	defer cancel()
 
@@ -111,36 +110,4 @@ func (pg *postgres) UpdateJobState(jobID int64, newState types.JobState, finaliz
 	}
 
 	return tx.Commit()
-}
-
-// RescheduleJob updates the scheduled_at and attempt fields for a job.
-func (pg *postgres) RescheduleJob(jobID int64, scheduledAt time.Time, attempt int) error {
-	ctx, cancel := context.WithTimeout(pg.ctx, pg.timeout)
-	defer cancel()
-
-	tx, err := pg.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-
-	if err = pg.queries.RescheduleJob(ctx, tx, jobID, scheduledAt, attempt); err != nil {
-		return err
-	}
-
-	return tx.Commit()
-}
-
-// ListJobsByState returns all jobs with a given state.
-func (pg *postgres) ListJobsByState(state string) (jobs []*types.JobRow, err error) {
-	ctx, cancel := context.WithTimeout(pg.ctx, pg.timeout)
-	defer cancel()
-
-	tx, err := pg.db.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback()
-
-	return pg.queries.ListJobsByState(ctx, tx, state)
 }

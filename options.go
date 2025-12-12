@@ -8,8 +8,6 @@ import (
 	"fmt"
 	"log/slog"
 	"time"
-
-	"github.com/isaqueveras/synk/storage"
 )
 
 // Option represents a function that modifies the configuration settings
@@ -56,7 +54,7 @@ func WithQueue(name string, queueCfg ...*QueueConfig) Option {
 // In this case, it uses a PostgreSQL storage implementation.
 // This option is essential for persisting job data and ensuring
 // reliable job processing.
-func WithStorage(storage storage.Storage) Option {
+func WithStorage(storage Storage) Option {
 	return func(cfg *config) {
 		cfg.storage = storage
 	}
