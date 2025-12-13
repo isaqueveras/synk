@@ -94,45 +94,46 @@ func (p *producer) startWork(ctx context.Context, job *JobRow, work work) {
 	}()
 
 	if err := work.unmarshal(); err != nil {
-		panic(err)
+		p.logger.ErrorContext(ctx, "Failed to unmarshal job args", slog.Int64("job_id", job.ID), slog.String("error", err.Error()))
+		return
 	}
 
-	jobTimeout := work.timeout()
-	if jobTimeout == 0 {
-		jobTimeout = p.jobTimeout
+	var (
+		timeout = work.timeout()
+		state   = JobStateCompleted
+		attempt *AttemptError
+	)
+
+	if timeout == 0 {
+		timeout = p.jobTimeout
 	}
 
-	if jobTimeout > 0 {
+	if timeout > 0 {
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, jobTimeout)
+		ctx, cancel = context.WithTimeout(ctx, timeout)
 		defer cancel()
 	}
 
 	if err := work.work(ctx); err != nil {
 		msg := err.Error()
-		attempt := &AttemptError{
+		attempt = &AttemptError{
 			At:      time.Now(),
 			Attempt: job.Attempt,
 			Error:   msg,
 			Trace:   string(debug.Stack()),
 		}
 
-		state := JobStateAvailable
+		state = JobStateAvailable
 		if job.Attempt >= job.Options.MaxRetries {
 			state = JobStateCancelled
 		}
 
-		if err := p.storage.UpdateJobState(job.ID, state, time.Now(), attempt); err != nil {
-			p.logger.DebugContext(ctx, fmt.Sprintf("Failed to update job %d to retryable: %v", job.ID, err))
-		}
-
 		p.logger.DebugContext(ctx, "Job failed", slog.Int64("job_id", job.ID), slog.String("kind", job.Kind),
 			slog.String("args", string(job.Args)), slog.String("error", msg))
-		return
 	}
 
-	if err := p.storage.UpdateJobState(job.ID, JobStateCompleted, time.Now(), nil); err != nil {
-		p.logger.DebugContext(ctx, fmt.Sprintf("Failed to update job %d to completed: %v", job.ID, err))
+	if err := p.storage.UpdateJobState(job.ID, state, time.Now(), attempt); err != nil {
+		p.logger.DebugContext(ctx, fmt.Sprintf("Failed to update job %d: %v", job.ID, err))
 	}
 
 	p.logger.DebugContext(ctx, "Job completed",
@@ -160,5 +161,8 @@ func (p *producer) getJobAvailable(jobs chan<- []*JobRow, limit int32, clientID 
 	if err != nil {
 		panic(err)
 	}
+
+	fmt.Printf("len(items): %v\n", len(items))
+
 	jobs <- items
 }

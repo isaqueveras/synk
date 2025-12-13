@@ -22,7 +22,7 @@ func New() *Queries {
 
 const getJobAvailableSQL = `
 WITH jobs AS (
-  SELECT id, args, kind
+  SELECT id, args, kind, attempt, max_attempts
   FROM synk.job
   WHERE state in ('available', 'scheduled') AND queue = $1::TEXT 
 		AND scheduled_at <= COALESCE($4::TIMESTAMPTZ, NOW())
@@ -37,7 +37,7 @@ WITH jobs AS (
   attempted_by = array_append(job.attempted_by, $3::TEXT)
 FROM jobs
 WHERE job.id = jobs.id
-RETURNING job.id, job.args, job.kind`
+RETURNING job.id, job.args, job.kind, job.attempt, job.max_attempts`
 
 // GetJobAvailable retrieves available jobs from the database and updates their state to 'running'.
 func (q *Queries) GetJobAvailable(ctx context.Context, tx *sql.Tx, queue string, limit int32, clientID *ulid.ULID) ([]*synk.JobRow, error) {
@@ -49,9 +49,8 @@ func (q *Queries) GetJobAvailable(ctx context.Context, tx *sql.Tx, queue string,
 
 	jobs := make([]*synk.JobRow, 0)
 	for rows.Next() {
-		var job = new(synk.JobRow)
-		job.Queue = queue
-		if err = rows.Scan(&job.ID, &job.Args, &job.Kind); err != nil {
+		var job = &synk.JobRow{Options: &synk.InsertOptions{}, Queue: queue}
+		if err = rows.Scan(&job.ID, &job.Args, &job.Kind, &job.Attempt, &job.Options.MaxRetries); err != nil {
 			if err == sql.ErrNoRows {
 				return nil, nil
 			}
