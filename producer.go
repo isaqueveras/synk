@@ -161,8 +161,5 @@ func (p *producer) getJobAvailable(jobs chan<- []*JobRow, limit int32, clientID 
 	if err != nil {
 		panic(err)
 	}
-
-	fmt.Printf("len(items): %v\n", len(items))
-
 	jobs <- items
 }
