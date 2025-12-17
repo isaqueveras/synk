@@ -13,6 +13,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/stdlib"
+	"github.com/oklog/ulid/v2"
 )
 
 func main() {
@@ -32,21 +33,35 @@ func main() {
 	client := synk.NewClient(ctx, synk.WithStorage(postgresql.New(db)), synk.WithLogger(logg))
 	defer client.Shutdown()
 
-	{ // Insert a job into the queue to be processed later
-		arg := worker.BiometryArgs{
-			BiometryID: "31GDRF8K0C8PY75K0JVXFYY0",
-			CustomerID: "01JK7753BK0C8PY75K0JVXFYY0",
+	for {
+		{ // Insert a job into the queue to be processed later
+			arg := worker.BiometryArgs{
+				BiometryID: ulid.Make().String(),
+				CustomerID: ulid.Make().String(),
+			}
+
+			if _, err = client.Insert("ownership", arg, &synk.InsertOptions{
+				MaxRetries: 3,
+				Priority:   synk.PriorityMedium,
+			}); err != nil {
+				panic(err)
+			}
 		}
 
-		opts := &synk.InsertOptions{
-			ScheduledAt: time.Now().Add(time.Minute * 2),
-			MaxRetries:  2,
-			// Pending:     true,
-			Priority: synk.PriorityMedium,
+		{
+			arg := worker.ContractArgs{
+				CustomerID:   ulid.Make().String(),
+				CustomerName: "John Doe",
+			}
+
+			if _, err := client.Insert("default", arg, &synk.InsertOptions{
+				MaxRetries: 7,
+				Priority:   synk.PriorityCritical,
+			}); err != nil {
+				panic(err)
+			}
 		}
 
-		if _, err = client.Insert("ownership", arg, opts); err != nil {
-			panic(err)
-		}
+		time.Sleep(time.Second)
 	}
 }
