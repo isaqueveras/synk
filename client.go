@@ -34,6 +34,7 @@ type client struct {
 type config struct {
 	queues  map[string]*QueueConfig
 	workers map[string]*workerInfo
+	cleaner *CleanerConfig
 	storage Storage
 	logger  *slog.Logger
 }
