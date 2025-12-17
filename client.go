@@ -273,7 +273,7 @@ func getOptionsOrDefault(options ...*InsertOptions) (JobState, *InsertOptions, e
 	}
 
 	if opts.Priority == 0 {
-		opts.Priority = 4
+		opts.Priority = PriorityMedium
 	}
 
 	state := JobStateAvailable
@@ -281,7 +281,7 @@ func getOptionsOrDefault(options ...*InsertOptions) (JobState, *InsertOptions, e
 		state = JobStateScheduled
 	}
 
-	if opts.Priority > 4 {
+	if (opts.Priority > PriorityLow) || (opts.Priority < PriorityCritical) {
 		return state, nil, errors.New("priority must be between 1 and 4")
 	}
 
