@@ -61,7 +61,7 @@ type QueueConfig struct {
 // It includes methods to start and stop the Client, which manages job queues and workers.
 type Client interface {
 	// InitProducers begins the processing of jobs by the client.
-	ProcessJobs()
+	Start()
 
 	// Shutdown halts the processing of jobs by the client.
 	Shutdown()
@@ -217,11 +217,11 @@ func (c *client) InsertTx(tx *sql.Tx, queue string, params JobArgs, options ...*
 	return id, nil
 }
 
-// ProcessJobs it initializes the client's context and starts the producers for each queue.
+// Start it initializes the client's context and starts the producers for each queue.
 // Each producer runs in a separate goroutine, fetching and processing jobs according to its configuration.
 // The method waits for all producers to complete their work before returning.
 // It also sets up a heartbeat mechanism to log the total number of completed jobs at regular intervals.
-func (c *client) ProcessJobs() {
+func (c *client) Start() {
 	c.ctx, c.cancel = context.WithCancel(c.ctx)
 
 	ctx, cancel := context.WithCancel(c.ctx)

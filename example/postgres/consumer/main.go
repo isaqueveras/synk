@@ -67,5 +67,5 @@ func main() {
 	client := synk.NewClient(ctx, opts...)
 	defer client.Shutdown()
 
-	client.ProcessJobs()
+	client.Start()
 }
