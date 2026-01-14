@@ -25,6 +25,10 @@ func main() {
 	}
 	defer db.Close()
 
+	db.SetMaxOpenConns(100)
+	db.SetMaxIdleConns(10)
+	db.SetConnMaxLifetime(time.Hour)
+
 	// Create a logger instance.
 	logg := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
@@ -46,13 +50,22 @@ func main() {
 		// Sets the workers to be used.
 		synk.WithWorker(worker.NewContract()),
 		synk.WithWorker(worker.NewBiometry()),
+
+		// Sets the job cleaner configuration.
+		synk.WithCleaner(&synk.CleanerConfig{
+			CleanInterval: time.Hour * 6, // every 6 hours
+			ByStatus: map[synk.JobState]time.Duration{
+				synk.JobStateCompleted: time.Hour * 24 * 15, // 15 days
+				synk.JobStateCancelled: time.Hour * 24 * 60, // 60 days
+			},
+		}),
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Hour)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	client := synk.NewClient(ctx, opts...)
 	defer client.Shutdown()
 
-	client.ProcessJobs()
+	client.Start()
 }
