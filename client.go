@@ -17,9 +17,9 @@ import (
 	"github.com/oklog/ulid/v2"
 )
 
-// client represents a client that manages the configuration,
+// Client represents a Client that manages the configuration,
 // context, and producers for a specific task.
-type client struct {
+type Client struct {
 	id  ulid.ULID
 	cfg *config
 	wg  sync.WaitGroup
@@ -60,8 +60,8 @@ type QueueConfig struct {
 // NewClient creates a new instance of worker with the provided context and options.
 // It initializes the client's configuration, queues, and workers. If no queues or workers are
 // configured, it panics. It also generates a unique client ID and sets up producers for each queue.
-func NewClient(ctx context.Context, opts ...Option) Client {
-	clt := &client{
+func NewClient(ctx context.Context, opts ...Option) *Client {
+	clt := &Client{
 		ctx:       ctx,
 		producers: make(map[string]*producer),
 		cfg: &config{
@@ -99,6 +99,14 @@ func NewClient(ctx context.Context, opts ...Option) Client {
 		return clt
 	}
 
+	if clt.cfg.cleaner != nil {
+		clt.wg.Add(1)
+		go func() {
+			defer clt.wg.Done()
+			clt.cleaner(ctx, clt.cfg.cleaner)
+		}()
+	}
+
 	for queue, config := range clt.cfg.queues {
 		logger := clt.cfg.logger.WithGroup("producer").With(slog.String("queue", queue))
 		clt.producers[queue] = &producer{
@@ -124,7 +132,9 @@ func NewClient(ctx context.Context, opts ...Option) Client {
 
 // Shutdown cancels the client's context and stops any ongoing work.
 // It calls the cancel functions associated with the client to gracefully shut down any operations.
-func (c *client) Shutdown() {
+func (c *Client) Shutdown() {
+	c.wg.Wait()
+
 	c.cfg.logger.Debug("Stopping client")
 	if c.cancel != nil {
 		c.cfg.logger.Debug("Stopping client context")
@@ -137,7 +147,7 @@ func (c *client) Shutdown() {
 }
 
 // Insert add a job into the queue to be processed.
-func (c *client) Insert(queue string, params JobArgs, options ...*InsertOptions) (*int64, error) {
+func (c *Client) Insert(queue string, params JobArgs, options ...*InsertOptions) (*int64, error) {
 	state, option, err := getOptionsOrDefault(options...)
 	if err != nil {
 		return nil, err
@@ -171,7 +181,7 @@ func (c *client) Insert(queue string, params JobArgs, options ...*InsertOptions)
 
 // InsertTx adds a job into the specified queue within the context of the provided
 // transaction, allowing the operation to be part of an atomic database transaction.
-func (c *client) InsertTx(tx *sql.Tx, queue string, params JobArgs, options ...*InsertOptions) (id *int64, err error) {
+func (c *Client) InsertTx(tx *sql.Tx, queue string, params JobArgs, options ...*InsertOptions) (id *int64, err error) {
 	state, option, err := getOptionsOrDefault(options...)
 	if err != nil {
 		return nil, err
@@ -204,7 +214,7 @@ func (c *client) InsertTx(tx *sql.Tx, queue string, params JobArgs, options ...*
 // Each producer runs in a separate goroutine, fetching and processing jobs according to its configuration.
 // The method waits for all producers to complete their work before returning.
 // It also sets up a heartbeat mechanism to log the total number of completed jobs at regular intervals.
-func (c *client) Start() {
+func (c *Client) Start() {
 	c.ctx, c.cancel = context.WithCancel(c.ctx)
 
 	ctx, cancel := context.WithCancel(c.ctx)
@@ -282,4 +292,22 @@ func getOptionsOrDefault(options ...*InsertOptions) (JobState, *InsertOptions, e
 	}
 
 	return state, opts, nil
+}
+
+func (c *Client) cleaner(ctx context.Context, clear *CleanerConfig) {
+	if c.cfg.cleaner.CleanInterval == 0 {
+		c.cfg.logger.ErrorContext(ctx, "cleaner interval is required")
+		return
+	}
+
+	if c.cfg.cleaner.ByStatus == nil {
+		c.cfg.logger.ErrorContext(ctx, "cleaner by status is required")
+		return
+	}
+
+	for range time.NewTicker(clear.CleanInterval).C {
+		if err := c.cfg.storage.Cleaner(clear); err != nil {
+			c.cfg.logger.ErrorContext(ctx, "failed to clean jobs", slog.String("error", err.Error()))
+		}
+	}
 }

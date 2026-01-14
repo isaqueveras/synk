@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/isaqueveras/synk"
@@ -94,4 +96,34 @@ func (q *Queries) UpdateJobState(ctx context.Context, tx *sql.Tx, jobID int64, n
 	}
 	_, err := tx.ExecContext(ctx, updateJobStateSQLNoError, newState, finalizedAt, jobID)
 	return err
+}
+
+// Cleaner is a method for cleaning up expired jobs based on their state and age.
+func (q *Queries) Cleaner(ctx context.Context, tx *sql.Tx, clear *synk.CleanerConfig) error {
+	const stmt = "(state = '%s' AND attempt_at < now() - interval '%s')"
+
+	var conditions []string
+	for status, retention := range clear.ByStatus {
+		conditions = append(conditions, fmt.Sprintf(stmt, status, formatInterval(retention)))
+	}
+
+	_, err := tx.ExecContext(ctx, fmt.Sprintf("DELETE FROM job WHERE %s", strings.Join(conditions, " OR ")))
+	return err
+}
+
+func formatInterval(d time.Duration) string {
+	seconds := int(d.Seconds())
+	days := seconds / (24 * 3600)
+	if days > 0 {
+		return fmt.Sprintf("%d days", days)
+	}
+	hours := seconds / 3600
+	if hours > 0 {
+		return fmt.Sprintf("%d hours", hours)
+	}
+	minutes := seconds / 60
+	if minutes > 0 {
+		return fmt.Sprintf("%d minutes", minutes)
+	}
+	return fmt.Sprintf("%d seconds", seconds)
 }

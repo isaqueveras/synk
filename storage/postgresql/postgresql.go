@@ -111,3 +111,21 @@ func (pg *postgres) UpdateJobState(jobID int64, newState synk.JobState, finalize
 
 	return tx.Commit()
 }
+
+// Cleaner is a method for cleaning up expired jobs based on their state and age.
+func (pg *postgres) Cleaner(clear *synk.CleanerConfig) error {
+	ctx, cancel := context.WithTimeout(pg.ctx, pg.timeout)
+	defer cancel()
+
+	tx, err := pg.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if err = pg.queries.Cleaner(ctx, tx, clear); err != nil {
+		return err
+	}
+
+	return tx.Commit()
+}
