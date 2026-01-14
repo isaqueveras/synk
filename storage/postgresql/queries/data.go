@@ -107,7 +107,7 @@ func (q *Queries) Cleaner(ctx context.Context, tx *sql.Tx, clear *synk.CleanerCo
 		conditions = append(conditions, fmt.Sprintf(stmt, status, formatInterval(retention)))
 	}
 
-	_, err := tx.ExecContext(ctx, fmt.Sprintf("DELETE FROM job WHERE %s", strings.Join(conditions, " OR ")))
+	_, err := tx.ExecContext(ctx, fmt.Sprintf("DELETE FROM synk.job WHERE %s", strings.Join(conditions, " OR ")))
 	return err
 }
 
