@@ -222,8 +222,6 @@ func (c *Client) Start() {
 
 	c.wg.Add(len(c.producers))
 	for _, producer := range c.producers {
-		producer := producer
-
 		go func() {
 			defer c.wg.Done()
 
@@ -305,9 +303,18 @@ func (c *Client) cleaner(ctx context.Context, clear *CleanerConfig) {
 		return
 	}
 
-	for range time.NewTicker(clear.CleanInterval).C {
-		if err := c.cfg.storage.Cleaner(clear); err != nil {
-			c.cfg.logger.ErrorContext(ctx, "failed to clean jobs", slog.String("error", err.Error()))
+	ticker := time.NewTicker(clear.CleanInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			c.cfg.logger.ErrorContext(ctx, "Heartbeat context done: "+ctx.Err().Error())
+			return
+		case <-ticker.C:
+			if err := c.cfg.storage.Cleaner(clear); err != nil {
+				c.cfg.logger.ErrorContext(ctx, "failed to clean jobs", slog.String("error", err.Error()))
+			}
 		}
 	}
 }
