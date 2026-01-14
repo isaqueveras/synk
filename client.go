@@ -57,23 +57,6 @@ type QueueConfig struct {
 	JobTimeout time.Duration
 }
 
-// Client defines the interface for a Client that can start and stop processing jobs.
-// It includes methods to start and stop the Client, which manages job queues and workers.
-type Client interface {
-	// InitProducers begins the processing of jobs by the client.
-	Start()
-
-	// Shutdown halts the processing of jobs by the client.
-	Shutdown()
-
-	// Insert add a job into the queue to be processed.
-	Insert(queue string, params JobArgs, opts ...*InsertOptions) (*int64, error)
-
-	// InsertTx adds a job into the specified queue within the context of the provided
-	// transaction, allowing the operation to be part of an atomic database transaction.
-	InsertTx(tx *sql.Tx, queue string, params JobArgs, opts ...*InsertOptions) (*int64, error)
-}
-
 // NewClient creates a new instance of worker with the provided context and options.
 // It initializes the client's configuration, queues, and workers. If no queues or workers are
 // configured, it panics. It also generates a unique client ID and sets up producers for each queue.
