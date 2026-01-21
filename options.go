@@ -32,6 +32,35 @@ func WithWorker[T JobArgs](w Worker[T]) Option {
 	}
 }
 
+// CleanerConfigDefault provides default settings for the job cleaner.
+var CleanerConfigDefault = &CleanerConfig{
+	CleanInterval: time.Hour * 24, // every 24 hours
+	ByStatus: map[JobState]time.Duration{
+		JobStateCompleted: time.Hour * 24 * 30, // 30 days
+		JobStateCancelled: time.Hour * 24 * 90, // 90 days
+	},
+}
+
+// CleanerConfig represents the configuration settings for the job cleaner.
+type CleanerConfig struct {
+	// CleanInterval is the time interval at which the cleaner will run to remove old jobs.
+	CleanInterval time.Duration
+
+	// ByStatus is a map that defines the retention duration for jobs based on their status.
+	// The key is the JobState, and the value is the duration after which jobs in that state
+	// should be cleaned up.
+	ByStatus map[JobState]time.Duration
+}
+
+// WithCleaner is an option function that sets the cleaner configuration for the synk client.
+// It takes a CleanerConfig struct as an argument and returns an Option function that updates
+// the Config with the provided cleaner configuration.
+func WithCleaner(cleaner *CleanerConfig) Option {
+	return func(cfg *config) {
+		cfg.cleaner = cleaner
+	}
+}
+
 // WithQueue is an option function that configures a queue with the given name and optional QueueConfig.
 // If no QueueConfig is provided, a default configuration with MaxWorkers set to 100 is used.
 // The function returns an Option that updates the Config with the specified queue configuration.

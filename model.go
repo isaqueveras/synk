@@ -112,4 +112,8 @@ type Storage interface {
 	// It takes the job ID, the new state, an optional finalized time, and an
 	// optional error message. It returns an error if the update fails.
 	UpdateJobState(jobID int64, newState JobState, finalizedAt time.Time, e *AttemptError) error
+
+	// Cleaner is a method for cleaning up expired jobs based on their state and age.
+	// It takes a CleanerConfig struct as input and returns an error if the cleanup fails.
+	Cleaner(*CleanerConfig) (int64, error)
 }
