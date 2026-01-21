@@ -99,16 +99,20 @@ func (q *Queries) UpdateJobState(ctx context.Context, tx *sql.Tx, jobID int64, n
 }
 
 // Cleaner is a method for cleaning up expired jobs based on their state and age.
-func (q *Queries) Cleaner(ctx context.Context, tx *sql.Tx, clear *synk.CleanerConfig) error {
-	const stmt = "(state = '%s' AND attempt_at < now() - interval '%s')"
+func (q *Queries) Cleaner(ctx context.Context, tx *sql.Tx, clear *synk.CleanerConfig) (int64, error) {
+	const stmt = "(state = '%s' AND attempted_at < now() - interval '%s')"
 
 	var conditions []string
 	for status, retention := range clear.ByStatus {
 		conditions = append(conditions, fmt.Sprintf(stmt, status, formatInterval(retention)))
 	}
 
-	_, err := tx.ExecContext(ctx, fmt.Sprintf("DELETE FROM synk.job WHERE %s", strings.Join(conditions, " OR ")))
-	return err
+	result, err := tx.ExecContext(ctx, fmt.Sprintf("DELETE FROM synk.job WHERE %s", strings.Join(conditions, " OR ")))
+	if err != nil {
+		return 0, err
+	}
+
+	return result.RowsAffected()
 }
 
 func formatInterval(d time.Duration) string {

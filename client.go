@@ -225,7 +225,6 @@ func (c *Client) Start() {
 		go func() {
 			defer c.wg.Done()
 
-			// starts a heartbeat goroutine for each producer to monitor their status.
 			go producer.heartbeat(c.ctx)
 
 			jobs := make(chan []*JobRow)
@@ -312,9 +311,12 @@ func (c *Client) cleaner(ctx context.Context, clear *CleanerConfig) {
 			c.cfg.logger.ErrorContext(ctx, "Heartbeat context done: "+ctx.Err().Error())
 			return
 		case <-ticker.C:
-			if err := c.cfg.storage.Cleaner(clear); err != nil {
+			rows, err := c.cfg.storage.Cleaner(clear)
+			if err != nil {
 				c.cfg.logger.ErrorContext(ctx, "failed to clean jobs", slog.String("error", err.Error()))
+				continue
 			}
+			c.cfg.logger.InfoContext(ctx, "Total cleaned jobs", slog.Int64("jobs_cleaned", rows))
 		}
 	}
 }

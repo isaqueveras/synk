@@ -115,5 +115,5 @@ type Storage interface {
 
 	// Cleaner is a method for cleaning up expired jobs based on their state and age.
 	// It takes a CleanerConfig struct as input and returns an error if the cleanup fails.
-	Cleaner(*CleanerConfig) error
+	Cleaner(*CleanerConfig) (int64, error)
 }
