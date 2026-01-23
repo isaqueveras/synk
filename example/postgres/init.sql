@@ -8,7 +8,6 @@ CREATE TYPE job_state AS ENUM(
   'available',
   'cancelled',
   'completed',
-  'discarded',
   'running',
   'scheduled',
   'pending'
@@ -16,6 +15,7 @@ CREATE TYPE job_state AS ENUM(
 
 CREATE TABLE job(
   id bigserial PRIMARY KEY,
+  name text NOT NULL,
   state job_state NOT NULL DEFAULT 'available'::job_state,
   attempt smallint NOT NULL DEFAULT 0,
   max_attempts smallint NOT NULL,
@@ -25,24 +25,27 @@ CREATE TABLE job(
   finalized_at timestamptz,
   scheduled_at timestamptz NOT NULL DEFAULT NOW(),
 
-  priority smallint NOT NULL DEFAULT 1,
+  depends_on bigint[] DEFAULT '{}',
+  priority smallint NOT NULL DEFAULT 3,
 
   args jsonb,
   attempted_by text[],
   errors jsonb[] NOT NULL DEFAULT '{}'::jsonb[],
   kind text NOT NULL,
-  metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
   queue text NOT NULL DEFAULT 'default'::text,
 
-  CONSTRAINT finalized_or_finalized_at_null CHECK ((state IN ('cancelled', 'completed', 'discarded') AND finalized_at IS NOT NULL) OR finalized_at IS NULL),
+  CONSTRAINT finalized_or_finalized_at_null CHECK ((state IN ('cancelled', 'completed') AND finalized_at IS NOT NULL) OR finalized_at IS NULL),
   CONSTRAINT max_attempts_is_positive CHECK (max_attempts > 0),
   CONSTRAINT priority_in_range CHECK (priority >= 1 AND priority <= 4),
   CONSTRAINT queue_length CHECK (char_length(queue) > 0 AND char_length(queue) < 128),
-  CONSTRAINT kind_length CHECK (char_length(kind) > 0 AND char_length(kind) < 128)
+  CONSTRAINT kind_length CHECK (char_length(kind) > 0 AND char_length(kind) < 128),
+  CONSTRAINT no_self_dependency CHECK (NOT (id = ANY(depends_on))),
+  CONSTRAINT name_length CHECK (char_length(name) > 0 AND char_length(name) < 128)
 );
 
 CREATE INDEX job_kind ON job USING btree(kind);
 CREATE INDEX job_state_and_finalized_at_index ON job USING btree(state, finalized_at) WHERE finalized_at IS NOT NULL;
 CREATE INDEX job_prioritized_fetching_index ON job USING btree(state, queue, priority, scheduled_at, id);
 CREATE INDEX job_args_index ON job USING GIN(args);
-CREATE INDEX job_metadata_index ON job USING GIN(metadata);
+CREATE INDEX job_depends_on_idx ON synk.job USING GIN(depends_on);
+CREATE INDEX job_reverse_deps_idx ON synk.job USING GIN(depends_on) WHERE array_length(depends_on, 1) > 0;
