@@ -135,7 +135,3 @@ func formatInterval(d time.Duration) string {
 	}
 	return fmt.Sprintf("%d seconds", seconds)
 }
-
-func (q *Queries) MigrateUp() error {
-	return nil
-}
