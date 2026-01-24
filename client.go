@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 // See LICENSE file in the project root for full license information.
 
+// Package synk provides a distributed job queue system for processing tasks in a distributed environment.
 package synk
 
 import (
@@ -147,49 +148,31 @@ func (c *Client) Shutdown() {
 }
 
 // Insert add a job into the queue to be processed.
-func (c *Client) Insert(queue string, params JobArgs, options ...*InsertOptions) (*int64, error) {
-	state, option, err := getOptionsOrDefault(options...)
-	if err != nil {
-		return nil, err
-	}
-
-	args, err := json.Marshal(params)
-	if err != nil {
-		return nil, err
-	}
-
-	row := &JobRow{
-		Kind:    params.Kind(),
-		Queue:   queue,
-		Args:    args,
-		State:   state,
-		Options: option,
-	}
-
-	var jobID *int64
-	if jobID, err = c.cfg.storage.Insert(row); err != nil {
-		c.cfg.logger.DebugContext(c.ctx, "failed to insert job into queue", slog.String("error", err.Error()),
-			slog.String("queue", queue), slog.String("kind", params.Kind()), slog.Any("args", params))
-		return nil, err
-	}
-
-	c.cfg.logger.DebugContext(c.ctx, "job inserted into queue", slog.String("queue", queue),
-		slog.Int64("job_id", *jobID), slog.String("kind", params.Kind()), slog.Any("args", params))
-
-	return jobID, nil
+// If no options are provided, it will use the default options.
+func (c *Client) Insert(name string, params JobArgs, options ...*InsertOptions) (*int64, error) {
+	return c.InsertTx(nil, name, params, options...)
 }
 
 // InsertTx adds a job into the specified queue within the context of the provided
 // transaction, allowing the operation to be part of an atomic database transaction.
-func (c *Client) InsertTx(tx *sql.Tx, queue string, params JobArgs, options ...*InsertOptions) (id *int64, err error) {
+func (c *Client) InsertTx(tx *sql.Tx, name string, params JobArgs, options ...*InsertOptions) (id *int64, err error) {
 	state, option, err := getOptionsOrDefault(options...)
 	if err != nil {
 		return nil, err
 	}
 
+	if name == "" {
+		return nil, errors.New("job name is required")
+	}
+
+	if params.Kind() == "" {
+		return nil, errors.New("job kind is required")
+	}
+
 	row := &JobRow{
+		Name:    name,
 		Kind:    params.Kind(),
-		Queue:   queue,
+		Queue:   option.Queue,
 		State:   state,
 		Options: option,
 	}
@@ -198,16 +181,17 @@ func (c *Client) InsertTx(tx *sql.Tx, queue string, params JobArgs, options ...*
 		return nil, err
 	}
 
-	if id, err = c.cfg.storage.InsertTx(tx, row); err != nil {
-		c.cfg.logger.DebugContext(c.ctx, "failed to insert job into queue within transaction", slog.String("error", err.Error()),
-			slog.String("queue", queue), slog.String("kind", params.Kind()), slog.Any("args", params))
+	var jobID *int64
+	if jobID, err = c.cfg.storage.Insert(tx, row); err != nil {
+		c.cfg.logger.DebugContext(c.ctx, "failed to insert job into queue", slog.String("error", err.Error()),
+			slog.String("queue", option.Queue), slog.String("kind", params.Kind()), slog.Any("args", params))
 		return nil, err
 	}
 
-	c.cfg.logger.DebugContext(c.ctx, "job inserted into queue within transaction", slog.String("queue", queue),
-		slog.Int64("job_id", *id), slog.String("kind", params.Kind()), slog.Any("args", params))
+	c.cfg.logger.DebugContext(c.ctx, "job inserted into queue", slog.String("queue", option.Queue),
+		slog.Int64("job_id", *jobID), slog.String("kind", params.Kind()), slog.Any("args", params))
 
-	return id, nil
+	return jobID, nil
 }
 
 // Start it initializes the client's context and starts the producers for each queue.
@@ -286,6 +270,14 @@ func getOptionsOrDefault(options ...*InsertOptions) (JobState, *InsertOptions, e
 
 	if opts.Pending {
 		state = JobStatePending
+	}
+
+	if opts.Queue == "" {
+		opts.Queue = "default"
+	}
+
+	if opts.DependsOn == nil {
+		opts.DependsOn = []*int64{}
 	}
 
 	return state, opts, nil
