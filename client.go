@@ -241,6 +241,21 @@ func (c *Client) Start() {
 	c.wg.Wait()
 }
 
+// Cancel cancels a job by its ID.
+func (c *Client) Cancel(ctx context.Context, jobID *int64) error {
+	panic("Method not implemented")
+}
+
+// Retry retries a job by its ID.
+func (c *Client) Retry(ctx context.Context, jobID *int64) error {
+	panic("Method not implemented")
+}
+
+// Delete deletes a job by its ID.
+func (c *Client) Delete(ctx context.Context, jobID *int64) error {
+	panic("Method not implemented")
+}
+
 func getOptionsOrDefault(options ...*InsertOptions) (JobState, *InsertOptions, error) {
 	opts := &InsertOptions{}
 	if len(options) > 0 {
