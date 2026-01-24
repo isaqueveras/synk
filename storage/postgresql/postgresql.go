@@ -91,7 +91,7 @@ func (pg *postgres) Insert(tx *sql.Tx, params *synk.JobRow) (id *int64, err erro
 }
 
 // UpdateJobState updates the state, finalized_at, and error message of a job.
-func (pg *postgres) UpdateJobState(jobID int64, newState synk.JobState, finalizedAt time.Time, e *synk.AttemptError) error {
+func (pg *postgres) UpdateJobState(jobID *int64, newState synk.JobState, finalizedAt time.Time, e *synk.AttemptError) error {
 	ctx, cancel := context.WithTimeout(pg.ctx, pg.timeout)
 	defer cancel()
 
@@ -125,4 +125,30 @@ func (pg *postgres) Cleaner(clear *synk.CleanerConfig) (int64, error) {
 	}
 
 	return rows, tx.Commit()
+}
+
+// Retry retries a job by its ID and returns an error if the operation fails.
+func (pg *postgres) Retry(jobID *int64) error {
+	ctx, cancel := context.WithTimeout(pg.ctx, pg.timeout)
+	defer cancel()
+
+	tx, err := pg.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: false})
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if err = pg.queries.Retry(ctx, tx, jobID); err != nil {
+		return err
+	}
+
+	return tx.Commit()
+}
+
+func (pg *postgres) Cancel(*int64) error {
+	return nil
+}
+
+func (pg *postgres) Delete(*int64) error {
+	return nil
 }

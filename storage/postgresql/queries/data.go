@@ -89,7 +89,7 @@ const updateJobStateSQLNoError = `UPDATE synk.job SET state = $1, finalized_at =
 const updateJobStateSQLWithError = `UPDATE synk.job SET state = $1, errors = array_append(errors, $2::jsonb) WHERE id = $3`
 
 // UpdateJobState updates the state of a job identified by its ID in the database.
-func (q *Queries) UpdateJobState(ctx context.Context, tx *sql.Tx, jobID int64, newState synk.JobState, finalizedAt time.Time, e *synk.AttemptError) error {
+func (q *Queries) UpdateJobState(ctx context.Context, tx *sql.Tx, jobID *int64, newState synk.JobState, finalizedAt time.Time, e *synk.AttemptError) error {
 	if e != nil {
 		errorJSON, err := json.Marshal(e)
 		if err != nil {
@@ -134,4 +134,26 @@ func formatInterval(d time.Duration) string {
 		return fmt.Sprintf("%d minutes", minutes)
 	}
 	return fmt.Sprintf("%d seconds", seconds)
+}
+
+const retrySQL = `
+WITH job_locked AS (
+	SELECT id FROM synk.job 
+	WHERE id = $1
+	FOR UPDATE SKIP LOCKED
+) UPDATE synk.job J SET 
+	state = 'available', 
+	attempt = 0, 
+	attempted_at = NULL,
+	finalized_at = NULL, 
+	scheduled_at = now()
+FROM job_locked JL
+WHERE J.id = JL.id AND J.state != 'running' AND NOT (
+	J.state = 'available' AND J.scheduled_at < now()
+);`
+
+// Retry retries a job by its ID and returns an error if the operation fails.
+func (q *Queries) Retry(ctx context.Context, tx *sql.Tx, jobID *int64) error {
+	_, err := tx.ExecContext(ctx, retrySQL, jobID)
+	return err
 }

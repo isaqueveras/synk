@@ -132,7 +132,7 @@ func (p *producer) startWork(ctx context.Context, job *JobRow, work work) {
 			slog.String("args", string(job.Args)), slog.String("error", msg))
 	}
 
-	if err := p.storage.UpdateJobState(job.ID, state, time.Now(), attempt); err != nil {
+	if err := p.storage.UpdateJobState(&job.ID, state, time.Now(), attempt); err != nil {
 		p.logger.DebugContext(ctx, fmt.Sprintf("Failed to update job %d: %v", job.ID, err))
 	}
 

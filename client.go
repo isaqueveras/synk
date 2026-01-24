@@ -248,7 +248,7 @@ func (c *Client) Cancel(ctx context.Context, jobID *int64) error {
 
 // Retry retries a job by its ID.
 func (c *Client) Retry(ctx context.Context, jobID *int64) error {
-	panic("Method not implemented")
+	return c.cfg.storage.Retry(jobID)
 }
 
 // Delete deletes a job by its ID.
