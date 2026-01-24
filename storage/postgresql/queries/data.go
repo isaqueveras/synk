@@ -28,7 +28,13 @@ WITH jobs AS (
   FROM synk.job
   WHERE state in ('available', 'scheduled') AND queue = $1::TEXT 
 		AND scheduled_at <= COALESCE($4::TIMESTAMPTZ, NOW())
-		AND attempt < max_attempts
+		AND attempt < max_attempts AND NOT EXISTS (
+      SELECT 1 FROM unnest(depends_on) dep_id
+      WHERE NOT EXISTS (
+        SELECT 1 FROM synk.job
+        WHERE id = dep_id AND state = 'completed'
+      )
+    )
   ORDER BY priority ASC, scheduled_at ASC, id ASC
   LIMIT $2::INTEGER
   FOR UPDATE SKIP LOCKED
@@ -39,7 +45,7 @@ WITH jobs AS (
   attempted_by = array_append(job.attempted_by, $3::TEXT)
 FROM jobs
 WHERE job.id = jobs.id
-RETURNING job.id, job.args, job.kind, job.attempt, job.max_attempts`
+RETURNING job.id, job.args, job.kind, job.attempt, job.max_attempts;`
 
 // GetJobAvailable retrieves available jobs from the database and updates their state to 'running'.
 func (q *Queries) GetJobAvailable(ctx context.Context, tx *sql.Tx, queue string, limit int32, clientID *ulid.ULID) ([]*synk.JobRow, error) {
@@ -69,16 +75,14 @@ func (q *Queries) GetJobAvailable(ctx context.Context, tx *sql.Tx, queue string,
 }
 
 const insertSQL = `
-INSERT INTO synk.job (queue, kind, args, max_attempts, state, scheduled_at, priority) 
-VALUES ($1, $2, $3::jsonb, $4, $5, $6, $7) RETURNING id`
+INSERT INTO synk.job (queue, kind, args, max_attempts, state, scheduled_at, priority, name, depends_on) 
+VALUES ($1, $2, $3::jsonb, $4, $5, $6, $7, $8, $9::bigint[]) RETURNING id;`
 
 // Insert inserts a new job into the database with the specified queue, kind, and arguments.
-func (q *Queries) Insert(ctx context.Context, tx *sql.Tx, params *synk.JobRow) (id *int64, err error) {
-	if err = tx.QueryRowContext(ctx, insertSQL, params.Queue, params.Kind, params.Args, params.Options.MaxRetries,
-		params.State, params.Options.ScheduledAt, params.Options.Priority).Scan(&id); err != nil {
-		return nil, err
-	}
-	return id, nil
+func (q *Queries) Insert(ctx context.Context, tx *sql.Tx, job *synk.JobRow) (id *int64, err error) {
+	err = tx.QueryRowContext(ctx, insertSQL, job.Queue, job.Kind, job.Args, job.Options.MaxRetries,
+		job.State, job.Options.ScheduledAt, job.Options.Priority, job.Name, job.Options.DependsOn).Scan(&id)
+	return id, err
 }
 
 const updateJobStateSQLNoError = `UPDATE synk.job SET state = $1, finalized_at = $2 WHERE id = $3`
@@ -130,4 +134,8 @@ func formatInterval(d time.Duration) string {
 		return fmt.Sprintf("%d minutes", minutes)
 	}
 	return fmt.Sprintf("%d seconds", seconds)
+}
+
+func (q *Queries) MigrateUp() error {
+	return nil
 }

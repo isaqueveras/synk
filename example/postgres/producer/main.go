@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"database/sql"
-	"log/slog"
 	"os"
 	"time"
 
@@ -13,7 +12,6 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/stdlib"
-	"github.com/oklog/ulid/v2"
 )
 
 func main() {
@@ -25,43 +23,36 @@ func main() {
 	}
 	defer db.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	logg := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	client := synk.NewClient(ctx, synk.WithStorage(postgresql.New(db)))
 
-	client := synk.NewClient(ctx, synk.WithStorage(postgresql.New(db)), synk.WithLogger(logg))
-	defer client.Shutdown()
+	opts := &synk.InsertOptions{
+		MaxRetries:  2,
+		Queue:       "ownership",
+		Priority:    synk.PriorityCritical,
+		ScheduledAt: time.Now().Add(time.Minute),
+	}
 
-	for {
-		{ // Insert a job into the queue to be processed later
-			arg := worker.BiometryArgs{
-				BiometryID: ulid.Make().String(),
-				CustomerID: ulid.Make().String(),
-			}
+	criarbiometriaID, err := client.Insert("CriarBiometria", worker.BiometryArgs{}, opts)
+	if err != nil {
+		panic(err)
+	}
 
-			if _, err = client.Insert("ownership", arg, &synk.InsertOptions{
-				MaxRetries: 3,
-				Priority:   synk.PriorityMedium,
-			}); err != nil {
-				panic(err)
-			}
-		}
+	opts.DependsOn = []*int64{criarbiometriaID}
+	criarContratoAtualTitularID, err := client.Insert("CriarContratoAtualTitular", worker.ContractArgs{}, opts)
+	if err != nil {
+		panic(err)
+	}
 
-		{
-			arg := worker.ContractArgs{
-				CustomerID:   ulid.Make().String(),
-				CustomerName: "John Doe",
-			}
+	criarContratoNovoTitularID, err := client.Insert("CriarContratoNovoTitular", worker.ContractArgs{}, opts)
+	if err != nil {
+		panic(err)
+	}
 
-			if _, err := client.Insert("default", arg, &synk.InsertOptions{
-				MaxRetries: 7,
-				Priority:   synk.PriorityCritical,
-			}); err != nil {
-				panic(err)
-			}
-		}
-
-		time.Sleep(time.Second)
+	opts.DependsOn = []*int64{criarContratoAtualTitularID, criarContratoNovoTitularID}
+	if _, err = client.Insert("CriarTermoCessão", worker.ContractArgs{}, opts); err != nil {
+		panic(err)
 	}
 }

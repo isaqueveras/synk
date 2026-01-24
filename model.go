@@ -12,15 +12,17 @@ import (
 // the type of job, the queue it belongs to, the encoded arguments, the current state of the job,
 // and any errors that occurred during attempts.
 type JobRow struct {
-	ID        int64
-	Attempt   int
-	AttemptAt *time.Time
-	Kind      string
-	Queue     string
-	Args      []byte
-	State     JobState
-	Errors    []AttemptError
-	Options   *InsertOptions
+	ID        int64          `json:"id,omitempty"`
+	Name      string         `json:"name,omitempty"`
+	Attempt   int            `json:"attempt,omitempty"`
+	AttemptAt *time.Time     `json:"attempt_at,omitempty"`
+	Kind      string         `json:"kind,omitempty"`
+	Queue     string         `json:"queue,omitempty"`
+	DependsOn []int64        `json:"depends_on,omitempty"`
+	Args      []byte         `json:"args,omitempty"`
+	State     JobState       `json:"state,omitempty"`
+	Errors    []AttemptError `json:"errors,omitempty"`
+	Options   *InsertOptions `json:"options,omitempty"`
 }
 
 // Priority represents the priority of a job.
@@ -36,6 +38,7 @@ const (
 // InsertOptions represents options for inserting a job into the queue.
 type InsertOptions struct {
 	// ScheduledAt is the time at which the job should be scheduled to run.
+	// If not specified, the current time is used.
 	ScheduledAt time.Time
 
 	// Priority is the priority of the job, which can be used to determine the order
@@ -47,8 +50,21 @@ type InsertOptions struct {
 	// as ready. If false, the job is ready to be executed.
 	Pending bool
 
+	// Queue is the name of the queue to which the job belongs.
+	// If not specified, the default queue is used.
+	Queue string
+
 	// MaxRetries is the maximum number of times the job can be retried if it fails.
+	// If not specified, the default value is used.
 	MaxRetries int
+
+	// DependsOn is a slice of job IDs that the current job depends on.
+	// If not specified, the current job does not depend on any other jobs.
+	// If any of the dependent jobs fail, the current job will not be executed.
+	// This is useful for ensuring that jobs are executed in a specific order.
+	// For example, if job A depends on job B, and job B fails, job A will not be executed.
+	// If job B succeeds, job A will be executed.
+	DependsOn []*int64
 }
 
 // JobState represents the status of a job.
@@ -58,7 +74,6 @@ const (
 	JobStateAvailable JobState = "available"
 	JobStateCancelled JobState = "cancelled"
 	JobStateCompleted JobState = "completed"
-	JobStateDiscarded JobState = "discarded"
 	JobStateRunning   JobState = "running"
 	JobStateScheduled JobState = "scheduled"
 	JobStatePending   JobState = "pending"
@@ -96,17 +111,11 @@ type Storage interface {
 	// It returns a slice of pointers to JobRow and an error if the operation fails.
 	GetJobAvailable(queue string, limit int32, clientID *ulid.ULID) ([]*JobRow, error)
 
-	// GetJobsScheduled retrieves a list of jobs that are scheduled to run.
-	// GetJobsScheduled() ([]*JobRow, error)
-
-	// Insert adds a new job to the specified queue with the given kind and arguments.
-	// It takes the name of the queue, the kind of job, and the arguments as a byte slice.
-	// It returns a pointer to the job ID and an error if the insertion fails.
-	Insert(params *JobRow) (*int64, error)
-
-	// InsertTx adds a new job to the specified queue with the given kind and arguments
-	// within the context of the provided transaction.
-	InsertTx(tx *sql.Tx, params *JobRow) (*int64, error)
+	// Insert adds a new job to the specified queue with the given kind and arguments
+	// within the context of the provided transaction. This allows the operation to be
+	// part of an atomic database transaction. It returns the ID of the inserted job
+	// and an error if the operation fails.
+	Insert(tx *sql.Tx, params *JobRow) (*int64, error)
 
 	// UpdateJobState updates the state of a job identified by its ID.
 	// It takes the job ID, the new state, an optional finalized time, and an
