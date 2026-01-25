@@ -92,20 +92,9 @@ func (pg *postgres) Insert(tx *sql.Tx, params *synk.JobRow) (id *int64, err erro
 
 // UpdateJobState updates the state, finalized_at, and error message of a job.
 func (pg *postgres) UpdateJobState(jobID *int64, newState synk.JobState, finalizedAt time.Time, e *synk.AttemptError) error {
-	ctx, cancel := context.WithTimeout(pg.ctx, pg.timeout)
-	defer cancel()
-
-	tx, err := pg.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-
-	if err = pg.queries.UpdateJobState(ctx, tx, jobID, newState, finalizedAt, e); err != nil {
-		return err
-	}
-
-	return tx.Commit()
+	return pg.withTx(func(ctx context.Context, tx *sql.Tx) error {
+		return pg.queries.UpdateJobState(ctx, tx, jobID, newState, finalizedAt, e)
+	})
 }
 
 // Cleaner is a method for cleaning up expired jobs based on their state and age.
@@ -129,38 +118,35 @@ func (pg *postgres) Cleaner(clear *synk.CleanerConfig) (int64, error) {
 
 // Retry retries a job by its ID and returns an error if the operation fails.
 func (pg *postgres) Retry(jobID *int64) error {
-	ctx, cancel := context.WithTimeout(pg.ctx, pg.timeout)
-	defer cancel()
-
-	tx, err := pg.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: false})
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-
-	if err = pg.queries.Retry(ctx, tx, jobID); err != nil {
-		return err
-	}
-
-	return tx.Commit()
+	return pg.withTx(func(ctx context.Context, tx *sql.Tx) error {
+		return pg.queries.Retry(ctx, tx, jobID)
+	})
 }
 
-func (pg *postgres) Cancel(*int64) error {
-	return nil
+func (pg *postgres) Cancel(jobID *int64) error {
+	return pg.withTx(func(ctx context.Context, tx *sql.Tx) error {
+		return nil
+	})
 }
 
 // Delete deletes a job by its ID and returns an error if the operation fails.
 func (pg *postgres) Delete(jobID *int64) error {
+	return pg.withTx(func(ctx context.Context, tx *sql.Tx) error {
+		return pg.queries.Delete(ctx, tx, jobID)
+	})
+}
+
+func (pg *postgres) withTx(fn func(context.Context, *sql.Tx) error) error {
 	ctx, cancel := context.WithTimeout(pg.ctx, pg.timeout)
 	defer cancel()
 
-	tx, err := pg.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: false})
+	tx, err := pg.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
 
-	if err = pg.queries.Delete(ctx, tx, jobID); err != nil {
+	if err = fn(ctx, tx); err != nil {
 		return err
 	}
 
