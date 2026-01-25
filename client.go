@@ -241,6 +241,21 @@ func (c *Client) Start() {
 	c.wg.Wait()
 }
 
+// Cancel cancels a job by its ID.
+func (c *Client) Cancel(ctx context.Context, jobID *int64) error {
+	return c.cfg.storage.Cancel(jobID)
+}
+
+// Retry retries a job by its ID.
+func (c *Client) Retry(ctx context.Context, jobID *int64) error {
+	return c.cfg.storage.Retry(jobID)
+}
+
+// Delete deletes a job by its ID.
+func (c *Client) Delete(ctx context.Context, jobID *int64) error {
+	return c.cfg.storage.Delete(jobID)
+}
+
 func getOptionsOrDefault(options ...*InsertOptions) (JobState, *InsertOptions, error) {
 	opts := &InsertOptions{}
 	if len(options) > 0 {

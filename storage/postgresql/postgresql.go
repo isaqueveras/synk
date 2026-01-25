@@ -72,8 +72,8 @@ func (pg *postgres) Insert(tx *sql.Tx, params *synk.JobRow) (id *int64, err erro
 	var newTx = tx
 	if tx == nil {
 		if newTx, err = pg.db.BeginTx(ctx, nil); err != nil {
-		return nil, err
-	}
+			return nil, err
+		}
 		defer newTx.Rollback()
 	}
 
@@ -83,7 +83,7 @@ func (pg *postgres) Insert(tx *sql.Tx, params *synk.JobRow) (id *int64, err erro
 
 	if tx == nil {
 		if err = newTx.Commit(); err != nil {
-		return nil, err
+			return nil, err
 		}
 	}
 
@@ -91,21 +91,10 @@ func (pg *postgres) Insert(tx *sql.Tx, params *synk.JobRow) (id *int64, err erro
 }
 
 // UpdateJobState updates the state, finalized_at, and error message of a job.
-func (pg *postgres) UpdateJobState(jobID int64, newState synk.JobState, finalizedAt time.Time, e *synk.AttemptError) error {
-	ctx, cancel := context.WithTimeout(pg.ctx, pg.timeout)
-	defer cancel()
-
-	tx, err := pg.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-
-	if err = pg.queries.UpdateJobState(ctx, tx, jobID, newState, finalizedAt, e); err != nil {
-		return err
-	}
-
-	return tx.Commit()
+func (pg *postgres) UpdateJobState(jobID *int64, newState synk.JobState, finalizedAt time.Time, e *synk.AttemptError) error {
+	return pg.withTx(func(ctx context.Context, tx *sql.Tx) error {
+		return pg.queries.UpdateJobState(ctx, tx, jobID, newState, finalizedAt, e)
+	})
 }
 
 // Cleaner is a method for cleaning up expired jobs based on their state and age.
@@ -125,4 +114,42 @@ func (pg *postgres) Cleaner(clear *synk.CleanerConfig) (int64, error) {
 	}
 
 	return rows, tx.Commit()
+}
+
+// Retry retries a job by its ID and returns an error if the operation fails.
+func (pg *postgres) Retry(jobID *int64) error {
+	return pg.withTx(func(ctx context.Context, tx *sql.Tx) error {
+		return pg.queries.Retry(ctx, tx, jobID)
+	})
+}
+
+// Cancel cancels a job by its ID and returns an error if the operation fails.
+func (pg *postgres) Cancel(jobID *int64) error {
+	return pg.withTx(func(ctx context.Context, tx *sql.Tx) error {
+		return pg.queries.Cancel(ctx, tx, jobID)
+	})
+}
+
+// Delete deletes a job by its ID and returns an error if the operation fails.
+func (pg *postgres) Delete(jobID *int64) error {
+	return pg.withTx(func(ctx context.Context, tx *sql.Tx) error {
+		return pg.queries.Delete(ctx, tx, jobID)
+	})
+}
+
+func (pg *postgres) withTx(fn func(context.Context, *sql.Tx) error) error {
+	ctx, cancel := context.WithTimeout(pg.ctx, pg.timeout)
+	defer cancel()
+
+	tx, err := pg.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if err = fn(ctx, tx); err != nil {
+		return err
+	}
+
+	return tx.Commit()
 }

@@ -44,7 +44,7 @@ type biometryWorker struct {
 func (biometryWorker) Work(_ context.Context, job *synk.Job[BiometryArgs]) error {
 	random := time.Duration(rand.Intn(10))
 	if random < 3 {
-		return fmt.Errorf("error processing biometry job: %s", job.Args.BiometryID)
+		return fmt.Errorf("error processing biometry job: %d", job.ID)
 	}
 	time.Sleep(time.Second * random)
 	return nil

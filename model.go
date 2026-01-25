@@ -117,10 +117,19 @@ type Storage interface {
 	// and an error if the operation fails.
 	Insert(tx *sql.Tx, params *JobRow) (*int64, error)
 
+	// Cancel cancels a job by its ID and returns an error if the operation fails.
+	Cancel(jobID *int64) error
+
+	// Retry retries a job by its ID and returns an error if the operation fails.
+	Retry(jobID *int64) error
+
+	// Delete deletes a job by its ID and returns an error if the operation fails.
+	Delete(jobID *int64) error
+
 	// UpdateJobState updates the state of a job identified by its ID.
 	// It takes the job ID, the new state, an optional finalized time, and an
 	// optional error message. It returns an error if the update fails.
-	UpdateJobState(jobID int64, newState JobState, finalizedAt time.Time, e *AttemptError) error
+	UpdateJobState(jobID *int64, newState JobState, finalizedAt time.Time, e *AttemptError) error
 
 	// Cleaner is a method for cleaning up expired jobs based on their state and age.
 	// It takes a CleanerConfig struct as input and returns an error if the cleanup fails.
