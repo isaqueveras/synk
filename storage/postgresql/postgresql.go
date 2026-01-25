@@ -72,8 +72,8 @@ func (pg *postgres) Insert(tx *sql.Tx, params *synk.JobRow) (id *int64, err erro
 	var newTx = tx
 	if tx == nil {
 		if newTx, err = pg.db.BeginTx(ctx, nil); err != nil {
-		return nil, err
-	}
+			return nil, err
+		}
 		defer newTx.Rollback()
 	}
 
@@ -83,7 +83,7 @@ func (pg *postgres) Insert(tx *sql.Tx, params *synk.JobRow) (id *int64, err erro
 
 	if tx == nil {
 		if err = newTx.Commit(); err != nil {
-		return nil, err
+			return nil, err
 		}
 	}
 
@@ -149,6 +149,20 @@ func (pg *postgres) Cancel(*int64) error {
 	return nil
 }
 
-func (pg *postgres) Delete(*int64) error {
-	return nil
+// Delete deletes a job by its ID and returns an error if the operation fails.
+func (pg *postgres) Delete(jobID *int64) error {
+	ctx, cancel := context.WithTimeout(pg.ctx, pg.timeout)
+	defer cancel()
+
+	tx, err := pg.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: false})
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if err = pg.queries.Delete(ctx, tx, jobID); err != nil {
+		return err
+	}
+
+	return tx.Commit()
 }

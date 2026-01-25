@@ -253,7 +253,7 @@ func (c *Client) Retry(ctx context.Context, jobID *int64) error {
 
 // Delete deletes a job by its ID.
 func (c *Client) Delete(ctx context.Context, jobID *int64) error {
-	panic("Method not implemented")
+	return c.cfg.storage.Delete(jobID)
 }
 
 func getOptionsOrDefault(options ...*InsertOptions) (JobState, *InsertOptions, error) {

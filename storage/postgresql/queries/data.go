@@ -148,12 +148,19 @@ WITH job_locked AS (
 	finalized_at = NULL, 
 	scheduled_at = now()
 FROM job_locked JL
-WHERE J.id = JL.id AND J.state != 'running' AND NOT (
-	J.state = 'available' AND J.scheduled_at < now()
-);`
+WHERE J.id = JL.id AND J.state != 'running'
+AND NOT (J.state = 'available' AND J.scheduled_at < now());`
 
 // Retry retries a job by its ID and returns an error if the operation fails.
 func (q *Queries) Retry(ctx context.Context, tx *sql.Tx, jobID *int64) error {
 	_, err := tx.ExecContext(ctx, retrySQL, jobID)
+	return err
+}
+
+const deleteSQL = `DELETE FROM synk.job WHERE id = $1;`
+
+// Delete deletes a job by its ID and returns an error if the operation fails.
+func (q *Queries) Delete(ctx context.Context, tx *sql.Tx, jobID *int64) error {
+	_, err := tx.ExecContext(ctx, deleteSQL, jobID)
 	return err
 }
