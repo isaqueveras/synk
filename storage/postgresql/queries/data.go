@@ -164,3 +164,20 @@ func (q *Queries) Delete(ctx context.Context, tx *sql.Tx, jobID *int64) error {
 	_, err := tx.ExecContext(ctx, deleteSQL, jobID)
 	return err
 }
+
+const cancelSQL = `
+WITH job_locked AS (
+	SELECT id FROM synk.job 
+	WHERE id = $1
+	FOR UPDATE SKIP LOCKED
+)
+UPDATE synk.job J 
+SET state = 'cancelled', finalized_at = now()
+FROM job_locked JL
+WHERE J.id = JL.id AND J.state not in ('running', 'cancelled', 'completed');`
+
+// Cancel cancels a job by its ID and returns an error if the operation fails.
+func (q *Queries) Cancel(ctx context.Context, tx *sql.Tx, jobID *int64) error {
+	_, err := tx.ExecContext(ctx, cancelSQL, jobID)
+	return err
+}

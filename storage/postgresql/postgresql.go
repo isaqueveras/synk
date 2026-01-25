@@ -123,9 +123,10 @@ func (pg *postgres) Retry(jobID *int64) error {
 	})
 }
 
+// Cancel cancels a job by its ID and returns an error if the operation fails.
 func (pg *postgres) Cancel(jobID *int64) error {
 	return pg.withTx(func(ctx context.Context, tx *sql.Tx) error {
-		return nil
+		return pg.queries.Cancel(ctx, tx, jobID)
 	})
 }
 
