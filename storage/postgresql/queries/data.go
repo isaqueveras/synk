@@ -28,13 +28,14 @@ WITH jobs AS (
   FROM synk.job
   WHERE state in ('available', 'scheduled') AND queue = $1::TEXT 
 		AND scheduled_at <= COALESCE($4::TIMESTAMPTZ, NOW())
-		AND attempt < max_attempts AND NOT EXISTS (
+		AND attempt < max_attempts 
+		AND (depends_on = '{}' OR NOT EXISTS (
       SELECT 1 FROM unnest(depends_on) dep_id
       WHERE NOT EXISTS (
         SELECT 1 FROM synk.job
         WHERE id = dep_id AND state = 'completed'
       )
-    )
+		))
   ORDER BY priority ASC, scheduled_at ASC, id ASC
   LIMIT $2::INTEGER
   FOR UPDATE SKIP LOCKED
