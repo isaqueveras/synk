@@ -68,7 +68,7 @@ func NewClient(ctx context.Context, opts ...Option) *Client {
 		cfg: &config{
 			queues:  make(map[string]*QueueConfig),
 			workers: make(map[string]*workerInfo),
-			logger:  slog.Default(),
+			logger:  slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelWarn})),
 		},
 	}
 
@@ -94,6 +94,11 @@ func NewClient(ctx context.Context, opts ...Option) *Client {
 		clt.cfg.logger.ErrorContext(ctx, "failed to ping storage: "+err.Error())
 		return nil
 	}
+
+	workCtx, workCancel := context.WithCancel(context.WithValue(ctx, ContextKeyClient{}, clt))
+
+	_ = workCtx
+	_ = workCancel
 
 	if len(clt.cfg.queues) == 0 || clt.cfg.workers == nil {
 		clt.cfg.logger.DebugContext(ctx, "no queues or workers configured")
@@ -326,4 +331,17 @@ func (c *Client) cleaner(ctx context.Context, clear *CleanerConfig) {
 			c.cfg.logger.InfoContext(ctx, "Total cleaned jobs", slog.Int64("jobs_cleaned", rows))
 		}
 	}
+}
+
+// ContextKeyClient is a context key used to store the client instance in the context.
+type ContextKeyClient struct{}
+
+// ClientFromContext returns the client instance from the context.
+// If the client is not found in the context, it returns an error.
+func ClientFromContext(ctx context.Context) (*Client, error) {
+	client, ok := ctx.Value(ContextKeyClient{}).(*Client)
+	if !ok || client == nil {
+		return nil, errors.New("client not found in context")
+	}
+	return client, nil
 }
