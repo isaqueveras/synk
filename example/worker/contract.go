@@ -48,5 +48,14 @@ func (w contractWorker) Work(ctx context.Context, job *synk.Job[ContractArgs]) e
 	}
 
 	time.Sleep(time.Second * random)
+
+	if random == 2 {
+		client, err := synk.ClientFromContext(ctx)
+		if err != nil {
+			return err
+		}
+		return client.Retry(ctx, &job.ID)
+	}
+
 	return nil
 }
