@@ -105,14 +105,6 @@ func NewClient(ctx context.Context, opts ...Option) *Client {
 		return clt
 	}
 
-	if clt.cfg.cleaner != nil {
-		clt.wg.Add(1)
-		go func() {
-			defer clt.wg.Done()
-			clt.cleaner(ctx, clt.cfg.cleaner)
-		}()
-	}
-
 	for queue, config := range clt.cfg.queues {
 		logger := clt.cfg.logger.WithGroup("producer").With(slog.String("queue", queue))
 		clt.producers[queue] = &producer{
@@ -136,20 +128,9 @@ func NewClient(ctx context.Context, opts ...Option) *Client {
 	return clt
 }
 
-// Shutdown cancels the client's context and stops any ongoing work.
-// It calls the cancel functions associated with the client to gracefully shut down any operations.
-func (c *Client) Shutdown() {
-	c.wg.Wait()
-
-	c.cfg.logger.Debug("Stopping client")
-	if c.cancel != nil {
-		c.cfg.logger.Debug("Stopping client context")
-		c.cancel()
-	}
-	if c.workCancel != nil {
-		c.cfg.logger.Debug("Stopping work cancel function")
-		c.workCancel()
-	}
+// Cleaner runs the cleaner function with the provided context and cleaner configuration.
+func (c *Client) Cleaner() {
+	c.cleaner(c.ctx, c.cfg.cleaner)
 }
 
 // Insert add a job into the queue to be processed.
