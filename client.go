@@ -7,21 +7,19 @@ package synk
 
 import (
 	"context"
-	"crypto/rand"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"os"
 	"sync"
 	"time"
-
-	"github.com/oklog/ulid/v2"
 )
 
 // Client represents a Client that manages the configuration,
 // context, and producers for a specific task.
 type Client struct {
-	id  ulid.ULID
+	id  string
 	cfg *config
 	wg  sync.WaitGroup
 
@@ -77,30 +75,24 @@ func NewClient(ctx context.Context, opts ...Option) *Client {
 		opt(clt.cfg)
 	}
 
-	clientID, err := ulid.New(ulid.Now(), rand.Reader)
-	if err != nil {
-		clt.cfg.logger.ErrorContext(ctx, "failed to create client ID: "+err.Error())
-		return nil
+	clt.id = clt.cfg.clientID
+	if clt.id == "" {
+		hostname, _ := os.Hostname()
+		clt.id = hostname + "_" + time.Now().Format(time.RFC3339)
 	}
 
-	clt.id = clientID
-	clt.cfg.logger = clt.cfg.logger.WithGroup("client").With(slog.String("id", clt.id.String()))
-
+	clt.cfg.logger = clt.cfg.logger.WithGroup("client").With(slog.String("id", clt.id))
 	if clt.cfg.storage == nil {
 		clt.cfg.logger.ErrorContext(ctx, "no storage configured")
-		return nil
+		return clt
 	}
 
 	if err := clt.cfg.storage.Ping(); err != nil {
 		clt.cfg.logger.ErrorContext(ctx, "failed to ping storage: "+err.Error())
-		return nil
+		return clt
 	}
 
-	workCtx, workCancel := context.WithCancel(context.WithValue(ctx, ContextKeyClient{}, clt))
-
-	_ = workCtx
-	_ = workCancel
-
+	clt.workCtx, clt.workCancel = context.WithCancel(context.WithValue(ctx, ContextKeyClient{}, clt))
 	if len(clt.cfg.queues) == 0 || clt.cfg.workers == nil {
 		clt.cfg.logger.DebugContext(ctx, "no queues or workers configured")
 		return clt
@@ -186,11 +178,6 @@ func (c *Client) InsertTx(tx *sql.Tx, name string, params JobArgs, options ...*I
 // The method waits for all producers to complete their work before returning.
 // It also sets up a heartbeat mechanism to log the total number of completed jobs at regular intervals.
 func (c *Client) Start() {
-	c.ctx, c.cancel = context.WithCancel(c.ctx)
-
-	ctx, cancel := context.WithCancel(c.ctx)
-	c.workCancel = cancel
-
 	c.wg.Add(len(c.producers))
 	for _, producer := range c.producers {
 		go func() {

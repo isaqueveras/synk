@@ -9,8 +9,6 @@ import (
 	"time"
 
 	"github.com/isaqueveras/synk"
-
-	"github.com/oklog/ulid/v2"
 )
 
 // Queries represents a collection of methods to interact with the PostgreSQL database.
@@ -49,8 +47,8 @@ WHERE job.id = jobs.id
 RETURNING job.id, job.args, job.kind, job.attempt, job.max_attempts;`
 
 // GetJobAvailable retrieves available jobs from the database and updates their state to 'running'.
-func (q *Queries) GetJobAvailable(ctx context.Context, tx *sql.Tx, queue string, limit int32, clientID *ulid.ULID) ([]*synk.JobRow, error) {
-	rows, err := tx.QueryContext(ctx, getJobAvailableSQL, queue, limit, clientID.String(), nil)
+func (q *Queries) GetJobAvailable(ctx context.Context, tx *sql.Tx, queue string, limit int32, clientID *string) ([]*synk.JobRow, error) {
+	rows, err := tx.QueryContext(ctx, getJobAvailableSQL, queue, limit, clientID, nil)
 	if err != nil {
 		return nil, err
 	}

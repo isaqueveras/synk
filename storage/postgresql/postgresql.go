@@ -7,8 +7,6 @@ import (
 
 	"github.com/isaqueveras/synk"
 	"github.com/isaqueveras/synk/storage/postgresql/queries"
-
-	"github.com/oklog/ulid/v2"
 )
 
 // New creates a new instance of the storage repository using the provided
@@ -41,7 +39,7 @@ func (pg *postgres) Ping() error {
 }
 
 // GetJobAvailable retrieves a list of available jobs from the specified queue with a limit on the number of jobs.
-func (pg *postgres) GetJobAvailable(queue string, limit int32, clientID *ulid.ULID) (items []*synk.JobRow, err error) {
+func (pg *postgres) GetJobAvailable(queue string, limit int32, clientID *string) (items []*synk.JobRow, err error) {
 	ctx, cancel := context.WithTimeout(pg.ctx, pg.timeout)
 	defer cancel()
 

@@ -7,12 +7,10 @@ import (
 	"runtime/debug"
 	"sync/atomic"
 	"time"
-
-	"github.com/oklog/ulid/v2"
 )
 
 type producer struct {
-	clientID *ulid.ULID
+	clientID *string
 
 	logger      *slog.Logger
 	jobsChannel chan *JobRow
@@ -156,7 +154,7 @@ func (p *producer) handleWorkerDone(job *JobRow) {
 	p.jobsChannel <- job
 }
 
-func (p *producer) getJobAvailable(jobs chan<- []*JobRow, limit int32, clientID *ulid.ULID) {
+func (p *producer) getJobAvailable(jobs chan<- []*JobRow, limit int32, clientID *string) {
 	items, err := p.storage.GetJobAvailable(p.config.queueName, limit, clientID)
 	if err != nil {
 		panic(err)

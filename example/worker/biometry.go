@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/isaqueveras/synk"
-	"github.com/oklog/ulid/v2"
 )
 
 // BiometryArgs defines the arguments required to process a biometry job.
@@ -56,8 +55,8 @@ func (biometryWorker) Work(ctx context.Context, job *synk.Job[BiometryArgs]) err
 			return err
 		}
 		_, err = client.Insert("MinhaTarefa", BiometryArgs{
-			BiometryID: ulid.Make().String(),
-			CustomerID: ulid.Make().String(),
+			BiometryID: "asdasdas",
+			CustomerID: "sdfsdfds",
 		})
 		return err
 	}

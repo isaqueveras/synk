@@ -3,8 +3,6 @@ package synk
 import (
 	"database/sql"
 	"time"
-
-	"github.com/oklog/ulid/v2"
 )
 
 // JobRow represents a row in the job table, containing information about a specific job.
@@ -109,7 +107,7 @@ type Storage interface {
 	// GetJobAvailable retrieves a list of available jobs from the specified queue.
 	// It takes the name of the queue and a limit on the number of jobs to retrieve.
 	// It returns a slice of pointers to JobRow and an error if the operation fails.
-	GetJobAvailable(queue string, limit int32, clientID *ulid.ULID) ([]*JobRow, error)
+	GetJobAvailable(queue string, limit int32, clientID *string) ([]*JobRow, error)
 
 	// Insert adds a new job to the specified queue with the given kind and arguments
 	// within the context of the provided transaction. This allows the operation to be
