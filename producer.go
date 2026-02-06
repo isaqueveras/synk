@@ -77,14 +77,19 @@ func (p *producer) start(ctx context.Context, jobs []*JobRow) {
 			return
 		}
 
+		jobCtx, jobCancel := context.WithCancelCause(ctx)
+		// defer jobCancel()
+
 		p.done = p.handleWorkerDone
 		p.numJobsActive.Add(1)
 
-		go p.startWork(ctx, job, work)
+		go p.startWork(jobCtx, jobCancel, job, work)
 	}
 }
 
-func (p *producer) startWork(ctx context.Context, job *JobRow, work work) {
+func (p *producer) startWork(ctx context.Context, cancel context.CancelCauseFunc, job *JobRow, work work) {
+	defer cancel(errors.New("context cancelled as executor finished"))
+
 	defer func() {
 		if r := recover(); r != nil {
 			p.logger.ErrorContext(ctx, string(debug.Stack()))

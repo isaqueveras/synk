@@ -25,8 +25,10 @@ type Client struct {
 
 	producers map[string]*producer
 
-	ctx        context.Context
-	cancel     context.CancelFunc
+	ctx    context.Context
+	cancel context.CancelFunc
+
+	workCtx    context.Context
 	workCancel context.CancelFunc
 }
 
@@ -54,6 +56,8 @@ var QueueConfigDefault = &QueueConfig{
 type QueueConfig struct {
 	MaxWorkers uint16
 	TimeFetch  time.Duration
+
+	workCtx    context.Context
 	JobTimeout time.Duration
 }
 
@@ -61,8 +65,10 @@ type QueueConfig struct {
 // It initializes the client's configuration, queues, and workers. If no queues or workers are
 // configured, it panics. It also generates a unique client ID and sets up producers for each queue.
 func NewClient(ctx context.Context, opts ...Option) *Client {
+	ctx, cancel := context.WithCancel(ctx)
+
 	clt := &Client{
-		ctx:       ctx,
+		ctx: ctx, cancel: cancel,
 		producers: make(map[string]*producer),
 		cfg: &config{
 			queues:  make(map[string]*QueueConfig),
@@ -111,7 +117,7 @@ func NewClient(ctx context.Context, opts ...Option) *Client {
 				maxWorkerCount: config.MaxWorkers,
 				timeFetch:      config.TimeFetch,
 				queueName:      queue,
-				workID:         clt.id.String(),
+				workID:         clt.id,
 				workers:        clt.cfg.workers,
 				jobTimeout:     config.JobTimeout,
 			},
@@ -180,27 +186,29 @@ func (c *Client) InsertTx(tx *sql.Tx, name string, params JobArgs, options ...*I
 func (c *Client) Start() {
 	c.wg.Add(len(c.producers))
 	for _, producer := range c.producers {
+		pdc := producer
+
 		go func() {
 			defer c.wg.Done()
 
-			go producer.heartbeat(c.ctx)
+			go pdc.heartbeat(c.ctx)
 
 			jobs := make(chan []*JobRow)
 			for {
 				select {
 				case <-c.ctx.Done():
-					producer.logger.DebugContext(c.ctx, "Producer context done: "+c.ctx.Err().Error())
+					pdc.logger.DebugContext(c.ctx, "Producer context done: "+c.ctx.Err().Error())
 					return
-				case <-time.NewTicker(producer.config.timeFetch).C:
-					producer.process(ctx, jobs)
+				case <-time.NewTicker(pdc.config.timeFetch).C:
+					pdc.process(c.workCtx, jobs)
 					select {
 					case <-c.ctx.Done():
-						producer.logger.DebugContext(c.ctx, "Producer context done: "+c.ctx.Err().Error())
+						pdc.logger.DebugContext(c.ctx, "Producer context done: "+c.ctx.Err().Error())
 						return
 					default:
 					}
-				case <-producer.jobsChannel:
-					producer.numJobsActive.Add(-1)
+				case <-pdc.jobsChannel:
+					pdc.numJobsActive.Add(-1)
 				}
 			}
 		}()
