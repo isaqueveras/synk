@@ -33,6 +33,9 @@ func main() {
 	logg := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
 	var opts = []synk.Option{
+		// Sets the client ID for the configuration.
+		synk.WithClientID("consumidor01"),
+
 		// Sets the configuration for the queues to be used.
 		synk.WithQueue("default", synk.QueueConfigDefault),
 		synk.WithQueue("ownership", &synk.QueueConfig{
