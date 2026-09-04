@@ -98,22 +98,12 @@ func (pg *postgres) UpdateJobState(jobID *int64, newState synk.JobState, finaliz
 }
 
 // Cleaner is a method for cleaning up expired jobs based on their state and age.
-func (pg *postgres) Cleaner(clear *synk.CleanerConfig) (int64, error) {
-	ctx, cancel := context.WithTimeout(pg.ctx, pg.timeout)
-	defer cancel()
-
-	tx, err := pg.db.BeginTx(ctx, nil)
-	if err != nil {
-		return 0, err
-	}
-	defer tx.Rollback()
-
-	var rows int64
-	if rows, err = pg.queries.Cleaner(ctx, tx, clear); err != nil {
-		return 0, err
-	}
-
-	return rows, tx.Commit()
+func (pg *postgres) Cleaner(clear *synk.CleanerConfig) (totalDeleted int64, err error) {
+	err = pg.withTx(func(ctx context.Context, tx *sql.Tx) error {
+		totalDeleted, err = pg.queries.Cleaner(ctx, tx, clear)
+		return err
+	})
+	return totalDeleted, err
 }
 
 // Retry retries a job by its ID and returns an error if the operation fails.
@@ -145,7 +135,7 @@ func (pg *postgres) withTx(fn func(context.Context, *sql.Tx) error) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	if err = fn(ctx, tx); err != nil {
 		return err
