@@ -74,7 +74,7 @@ func (pg *postgres) Insert(tx *sql.Tx, params *synk.JobRow) (id *int64, err erro
 		if newTx, err = pg.db.BeginTx(ctx, nil); err != nil {
 			return nil, err
 		}
-		defer newTx.Rollback()
+		defer func() { _ = newTx.Rollback() }()
 	}
 
 	if id, err = pg.queries.Insert(ctx, newTx, params); err != nil {
@@ -93,7 +93,15 @@ func (pg *postgres) Insert(tx *sql.Tx, params *synk.JobRow) (id *int64, err erro
 // UpdateJobState updates the state, finalized_at, and error message of a job.
 func (pg *postgres) UpdateJobState(jobID *int64, newState synk.JobState, finalizedAt time.Time, e *synk.AttemptError) error {
 	return pg.withTx(func(ctx context.Context, tx *sql.Tx) error {
-		return pg.queries.UpdateJobState(ctx, tx, jobID, newState, finalizedAt, e)
+		if err := pg.queries.UpdateJobState(ctx, tx, jobID, newState, finalizedAt, e); err != nil {
+			return err
+		}
+
+		if newState == synk.JobStateCompleted {
+			return pg.queries.ResolveDependencies(ctx, tx, jobID)
+		}
+
+		return nil
 	})
 }
 

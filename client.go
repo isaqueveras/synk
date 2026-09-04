@@ -262,6 +262,10 @@ func getOptionsOrDefault(options ...*InsertOptions) (JobState, *InsertOptions, e
 		opts = options[0]
 	}
 
+	if (opts.Priority > PriorityLow) || (opts.Priority < PriorityCritical) {
+		return JobStateCancelled, nil, errors.New("priority must be between 1 and 4")
+	}
+
 	if opts.Priority == 0 {
 		opts.Priority = PriorityMedium
 	}
@@ -269,10 +273,6 @@ func getOptionsOrDefault(options ...*InsertOptions) (JobState, *InsertOptions, e
 	state := JobStateAvailable
 	if !opts.ScheduledAt.IsZero() {
 		state = JobStateScheduled
-	}
-
-	if (opts.Priority > PriorityLow) || (opts.Priority < PriorityCritical) {
-		return state, nil, errors.New("priority must be between 1 and 4")
 	}
 
 	if opts.ScheduledAt.IsZero() || opts.ScheduledAt.Before(time.Now()) {
@@ -283,7 +283,7 @@ func getOptionsOrDefault(options ...*InsertOptions) (JobState, *InsertOptions, e
 		opts.MaxRetries = 7
 	}
 
-	if opts.Pending {
+	if opts.Pending || len(opts.DependsOn) > 0 {
 		state = JobStatePending
 	}
 

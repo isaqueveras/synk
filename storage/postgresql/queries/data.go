@@ -25,19 +25,15 @@ const getJobAvailableSQL = `
 WITH jobs AS (
   SELECT id, args, kind, attempt, max_attempts
   FROM synk.job
-  WHERE state in ('available', 'scheduled') AND queue = $1::TEXT 
-		AND scheduled_at <= COALESCE($4::TIMESTAMPTZ, NOW())
-		AND attempt < max_attempts AND NOT EXISTS (
-      SELECT 1 FROM unnest(depends_on) dep_id
-      WHERE NOT EXISTS (
-        SELECT 1 FROM synk.job
-        WHERE id = dep_id AND state = 'completed'
-      )
-    )
+  WHERE state in ('available', 'scheduled') 
+    AND queue = $1::TEXT 
+    AND scheduled_at <= COALESCE($4::TIMESTAMPTZ, NOW())
+    AND attempt < max_attempts
   ORDER BY priority ASC, scheduled_at ASC, id ASC
   LIMIT $2::INTEGER
   FOR UPDATE SKIP LOCKED
-) UPDATE synk.job SET
+) 
+UPDATE synk.job SET
   state = 'running',
   attempt = job.attempt + 1,
   attempted_at = NOW(),
@@ -71,20 +67,26 @@ func (q *Queries) GetJobAvailable(ctx context.Context, tx *sql.Tx, queue string,
 }
 
 const insertSQL = `
-INSERT INTO synk.job (queue, kind, args, max_attempts, state, scheduled_at, priority, name, depends_on) 
-VALUES ($1, $2, $3::jsonb, $4, $5, $6, $7, $8, $9::bigint[]) RETURNING id;`
+INSERT INTO synk.job (
+	queue, kind, args, max_attempts, state, scheduled_at, 
+	priority, name, depends_on, remaining_dependencies
+) VALUES (
+ 	$1, $2, $3::jsonb, $4, $5, $6, $7, $8, 
+	$9::bigint[], COALESCE(array_length($9::bigint[], 1), 0)
+) RETURNING id;`
 
 // Insert inserts a new job into the database with the specified queue, kind, and arguments.
 func (q *Queries) Insert(ctx context.Context, tx *sql.Tx, job *synk.JobRow) (id *int64, err error) {
 	err = tx.QueryRowContext(ctx, insertSQL, job.Queue, job.Kind, job.Args, job.Options.MaxRetries,
-		job.State, job.Options.ScheduledAt, job.Options.Priority, job.Name, job.Options.DependsOn).Scan(&id)
+		job.State, job.Options.ScheduledAt, job.Options.Priority, job.Name, job.Options.DependsOn,
+	).Scan(&id)
 	return id, err
 }
 
 const updateJobStateSQLNoError = `UPDATE synk.job SET state = $1, finalized_at = $2 WHERE id = $3`
 const updateJobStateSQLWithError = `UPDATE synk.job SET state = $1, errors = array_append(errors, $2::jsonb) WHERE id = $3`
 
-// UpdateJobState updates the state of a job identified by its ID in the database.
+// UpdateJobState updates the state of a job identified by its ID in the database
 func (q *Queries) UpdateJobState(ctx context.Context, tx *sql.Tx, jobID *int64, newState synk.JobState, finalizedAt time.Time, e *synk.AttemptError) error {
 	if e != nil {
 		errorJSON, err := json.Marshal(e)
@@ -95,6 +97,23 @@ func (q *Queries) UpdateJobState(ctx context.Context, tx *sql.Tx, jobID *int64, 
 		return err
 	}
 	_, err := tx.ExecContext(ctx, updateJobStateSQLNoError, newState, finalizedAt, jobID)
+	return err
+}
+
+const resolveDependenciesSQL = `
+UPDATE job
+SET
+	remaining_dependencies = remaining_dependencies - 1,
+	state = CASE 
+		WHEN remaining_dependencies - 1 <= 0 AND scheduled_at > NOW() THEN 'scheduled'::job_state 
+		WHEN remaining_dependencies - 1 <= 0 THEN 'available'::job_state 
+		ELSE state 
+	END
+WHERE $1 = ANY(depends_on) AND state = 'pending';`
+
+// ResolveDependencies resolves dependencies for a job identified by its ID in the database
+func (q *Queries) ResolveDependencies(ctx context.Context, tx *sql.Tx, jobID *int64) error {
+	_, err := tx.ExecContext(ctx, resolveDependenciesSQL, jobID)
 	return err
 }
 

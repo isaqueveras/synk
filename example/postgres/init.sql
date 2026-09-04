@@ -26,6 +26,7 @@ CREATE TABLE job(
   scheduled_at timestamptz NOT NULL DEFAULT NOW(),
 
   depends_on bigint[] DEFAULT '{}',
+  remaining_dependencies INTEGER DEFAULT 0,
   priority smallint NOT NULL DEFAULT 3,
 
   args jsonb,
@@ -40,12 +41,13 @@ CREATE TABLE job(
   CONSTRAINT queue_length CHECK (char_length(queue) > 0 AND char_length(queue) < 128),
   CONSTRAINT kind_length CHECK (char_length(kind) > 0 AND char_length(kind) < 128),
   CONSTRAINT no_self_dependency CHECK (NOT (id = ANY(depends_on))),
-  CONSTRAINT name_length CHECK (char_length(name) > 0 AND char_length(name) < 128)
+  CONSTRAINT name_length CHECK (char_length(name) > 0 AND char_length(name) < 128),
+  CONSTRAINT non_negative_dependencies CHECK (remaining_dependencies >= 0)
 );
 
 CREATE INDEX job_kind ON job USING btree(kind);
 CREATE INDEX job_state_and_finalized_at_index ON job USING btree(state, finalized_at) WHERE finalized_at IS NOT NULL;
 CREATE INDEX job_prioritized_fetching_index ON job USING btree(state, queue, priority, scheduled_at, id);
 CREATE INDEX job_args_index ON job USING GIN(args);
-CREATE INDEX job_depends_on_idx ON synk.job USING GIN(depends_on);
-CREATE INDEX job_reverse_deps_idx ON synk.job USING GIN(depends_on) WHERE array_length(depends_on, 1) > 0;
+CREATE INDEX job_find_children_idx ON job USING GIN(depends_on) 
+WHERE array_length(depends_on, 1) > 0 AND state = 'pending';
