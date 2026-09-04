@@ -22,7 +22,7 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -30,7 +30,7 @@ func main() {
 	client := synk.NewClient(ctx, synk.WithClientID("produtor01"), synk.WithStorage(postgresql.New(db)))
 
 	opts := &synk.InsertOptions{
-		MaxRetries:  2,
+		MaxRetries:  15,
 		Queue:       "ownership",
 		Priority:    synk.PriorityCritical,
 		ScheduledAt: time.Now().Add(time.Minute),

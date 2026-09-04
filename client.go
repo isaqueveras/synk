@@ -244,6 +244,10 @@ func getOptionsOrDefault(options ...*InsertOptions) (JobState, *InsertOptions, e
 		opts = options[0]
 	}
 
+	if (opts.Priority > PriorityLow) || (opts.Priority < PriorityCritical) {
+		return JobStateCancelled, nil, errors.New("priority must be between 1 and 4")
+	}
+
 	if opts.Priority == 0 {
 		opts.Priority = PriorityMedium
 	}
@@ -251,10 +255,6 @@ func getOptionsOrDefault(options ...*InsertOptions) (JobState, *InsertOptions, e
 	state := JobStateAvailable
 	if !opts.ScheduledAt.IsZero() {
 		state = JobStateScheduled
-	}
-
-	if (opts.Priority > PriorityLow) || (opts.Priority < PriorityCritical) {
-		return state, nil, errors.New("priority must be between 1 and 4")
 	}
 
 	if opts.ScheduledAt.IsZero() || opts.ScheduledAt.Before(time.Now()) {
@@ -265,7 +265,7 @@ func getOptionsOrDefault(options ...*InsertOptions) (JobState, *InsertOptions, e
 		opts.MaxRetries = 7
 	}
 
-	if opts.Pending {
+	if opts.Pending || len(opts.DependsOn) > 0 {
 		state = JobStatePending
 	}
 
@@ -300,12 +300,12 @@ func (c *Client) cleaner(ctx context.Context, clear *CleanerConfig) {
 			c.cfg.logger.ErrorContext(ctx, "Heartbeat context done: "+ctx.Err().Error())
 			return
 		case <-ticker.C:
-			rows, err := c.cfg.storage.Cleaner(clear)
+			totalDeleted, err := c.cfg.storage.Cleaner(clear)
 			if err != nil {
 				c.cfg.logger.ErrorContext(ctx, "failed to clean jobs", slog.String("error", err.Error()))
 				continue
 			}
-			c.cfg.logger.InfoContext(ctx, "Total cleaned jobs", slog.Int64("jobs_cleaned", rows))
+			c.cfg.logger.InfoContext(ctx, "Total cleaned jobs", slog.Int64("jobs_cleaned", totalDeleted))
 		}
 	}
 }

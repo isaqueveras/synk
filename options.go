@@ -43,6 +43,7 @@ func WithWorker[T JobArgs](w Worker[T]) Option {
 // CleanerConfigDefault provides default settings for the job cleaner.
 var CleanerConfigDefault = &CleanerConfig{
 	CleanInterval: time.Hour * 24, // every 24 hours
+	BatchSize:     5000,           // delete 5000 jobs at a time
 	ByStatus: map[JobState]time.Duration{
 		JobStateCompleted: time.Hour * 24 * 30, // 30 days
 		JobStateCancelled: time.Hour * 24 * 90, // 90 days
@@ -53,6 +54,9 @@ var CleanerConfigDefault = &CleanerConfig{
 type CleanerConfig struct {
 	// CleanInterval is the time interval at which the cleaner will run to remove old jobs.
 	CleanInterval time.Duration
+
+	// BatchSize is the number of jobs to delete in each batch.
+	BatchSize uint
 
 	// ByStatus is a map that defines the retention duration for jobs based on their status.
 	// The key is the JobState, and the value is the duration after which jobs in that state
