@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/isaqueveras/synk"
@@ -53,15 +52,12 @@ func (q *Queries) GetJobAvailable(ctx context.Context, tx *sql.Tx, queue string,
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	jobs := make([]*synk.JobRow, 0)
 	for rows.Next() {
 		var job = &synk.JobRow{Options: &synk.InsertOptions{}, Queue: queue}
 		if err = rows.Scan(&job.ID, &job.Args, &job.Kind, &job.Attempt, &job.Options.MaxRetries); err != nil {
-			if err == sql.ErrNoRows {
-				return nil, nil
-			}
 			return nil, err
 		}
 		jobs = append(jobs, job)
@@ -102,38 +98,42 @@ func (q *Queries) UpdateJobState(ctx context.Context, tx *sql.Tx, jobID *int64, 
 	return err
 }
 
+const cleanerBatchSQL = `
+WITH cleaner_batch AS (
+	SELECT id
+	FROM job
+	WHERE state = $1 AND finalized_at < $2
+	LIMIT $3
+	FOR UPDATE SKIP LOCKED
+)
+DELETE FROM job j 
+USING cleaner_batch c 
+WHERE j.id = c.id;`
+
 // Cleaner is a method for cleaning up expired jobs based on their state and age.
+// Deletion is performed in batches to avoid table locks and I/O spikes on the database
 func (q *Queries) Cleaner(ctx context.Context, tx *sql.Tx, clear *synk.CleanerConfig) (int64, error) {
-	const stmt = "(state = '%s' AND attempted_at < now() - interval '%s')"
+	var totalDeleted int64
+	for status, retentionDuration := range clear.ByStatus {
+		cutoffTime := time.Now().Add(-retentionDuration)
+		for {
+			result, err := tx.ExecContext(ctx, cleanerBatchSQL, status, cutoffTime, clear.BatchSize)
+			if err != nil {
+				return totalDeleted, fmt.Errorf("failed to clean status %q: %w", status, err)
+			}
 
-	var conditions []string
-	for status, retention := range clear.ByStatus {
-		conditions = append(conditions, fmt.Sprintf(stmt, status, formatInterval(retention)))
-	}
+			rowsAffected, err := result.RowsAffected()
+			if err != nil {
+				return totalDeleted, err
+			}
 
-	result, err := tx.ExecContext(ctx, fmt.Sprintf("DELETE FROM synk.job WHERE %s", strings.Join(conditions, " OR ")))
-	if err != nil {
-		return 0, err
+			totalDeleted += rowsAffected
+			if rowsAffected < int64(clear.BatchSize) {
+				break
+			}
+		}
 	}
-
-	return result.RowsAffected()
-}
-
-func formatInterval(d time.Duration) string {
-	seconds := int(d.Seconds())
-	days := seconds / (24 * 3600)
-	if days > 0 {
-		return fmt.Sprintf("%d days", days)
-	}
-	hours := seconds / 3600
-	if hours > 0 {
-		return fmt.Sprintf("%d hours", hours)
-	}
-	minutes := seconds / 60
-	if minutes > 0 {
-		return fmt.Sprintf("%d minutes", minutes)
-	}
-	return fmt.Sprintf("%d seconds", seconds)
+	return totalDeleted, nil
 }
 
 const retrySQL = `
