@@ -59,8 +59,10 @@ func main() {
 
 	time.Sleep(time.Minute)
 
-	log.Print("Fazendo retentativa")
+	log.Print("retrying job")
 	if err := client.Retry(ctx, criarbiometriaID); err != nil {
 		panic(err)
 	}
+
+	time.Sleep(time.Minute)
 }

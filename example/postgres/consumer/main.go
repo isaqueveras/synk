@@ -71,17 +71,7 @@ func main() {
 	client := synk.NewClient(ctx, opts...)
 
 	var wg sync.WaitGroup
-	defer wg.Wait()
-
-	wg.Add(1)
-	go func() { // Run the cleaner in a separate goroutine
-		defer wg.Done()
-		client.Cleaner()
-	}()
-
-	wg.Add(1)
-	go func() { // Start the producers in a separate goroutine
-		defer wg.Done()
-	client.Start()
-	}()
+	wg.Go(client.Cleaner)
+	wg.Go(client.Start)
+	wg.Wait()
 }

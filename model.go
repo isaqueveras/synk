@@ -81,19 +81,15 @@ const (
 // It contains details about the time of the error, the attempt number,
 // the error message, and a stack trace if the job panicked.
 type AttemptError struct {
+	// ClientID is the ID of the client who used the job.
+	ClientID string `json:"client_id"`
 	// At is the time at which the error occurred.
 	At time.Time `json:"at"`
-
-	// Attempt is the attempt number on which the error occurred (maps to
-	// Attempt on a job row).
+	// Attempt is the attempt number on which the error occurred (maps to Attempt on a job row).
 	Attempt int `json:"attempt"`
-
-	// Error contains the stringified error of an error returned from a job or a
-	// panic value in case of a panic.
+	// Error contains the stringified error of an error returned from a job or a panic value in case of a panic.
 	Error string `json:"error"`
-
-	// Trace contains a stack trace from a job that panicked. The trace is
-	// produced by invoking `debug.Trace()`.
+	// Trace contains a stack trace from a job that panicked. The trace is produced by invoking `debug.Trace()`.
 	Trace string `json:"trace"`
 }
 

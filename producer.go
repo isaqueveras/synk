@@ -2,6 +2,7 @@ package synk
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"runtime/debug"
@@ -120,10 +121,11 @@ func (p *producer) startWork(ctx context.Context, cancel context.CancelCauseFunc
 	if err := work.work(ctx); err != nil {
 		msg := err.Error()
 		attempt = &AttemptError{
-			At:      time.Now(),
-			Attempt: job.Attempt,
-			Error:   msg,
-			Trace:   string(debug.Stack()),
+			ClientID: *p.clientID,
+			At:       time.Now(),
+			Attempt:  job.Attempt,
+			Error:    msg,
+			Trace:    string(debug.Stack()),
 		}
 
 		state = JobStateAvailable
@@ -131,8 +133,12 @@ func (p *producer) startWork(ctx context.Context, cancel context.CancelCauseFunc
 			state = JobStateCancelled
 		}
 
-		p.logger.DebugContext(ctx, "Job failed", slog.Int64("job_id", job.ID), slog.String("kind", job.Kind),
-			slog.String("args", string(job.Args)), slog.String("error", msg))
+		p.logger.DebugContext(ctx, "Job failed",
+			slog.Int64("job_id", job.ID),
+			slog.String("kind", job.Kind),
+			slog.String("args", string(job.Args)),
+			slog.String("error", msg),
+		)
 	}
 
 	if err := p.storage.UpdateJobState(&job.ID, state, time.Now(), attempt); err != nil {
