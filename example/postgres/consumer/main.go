@@ -58,6 +58,7 @@ func main() {
 		// Sets the job cleaner configuration.
 		synk.WithCleaner(&synk.CleanerConfig{
 			CleanInterval: time.Hour * 6, // every 6 hours
+			BatchSize:     100,           // 100 jobs per batch
 			ByStatus: map[synk.JobState]time.Duration{
 				synk.JobStateCompleted: time.Hour * 24 * 15, // 15 days
 				synk.JobStateCancelled: time.Hour * 24 * 60, // 60 days
