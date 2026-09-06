@@ -2,17 +2,16 @@ package synk
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"runtime/debug"
 	"sync/atomic"
 	"time"
-
-	"github.com/oklog/ulid/v2"
 )
 
 type producer struct {
-	clientID *ulid.ULID
+	clientID *string
 
 	logger      *slog.Logger
 	jobsChannel chan *JobRow
@@ -41,11 +40,11 @@ func (p *producer) process(ctx context.Context, jobs chan []*JobRow) {
 
 	for {
 		select {
-		case jobs := <-jobs:
-			if len(jobs) != 0 {
-				p.start(ctx, jobs)
+		case jobs, ok := <-jobs:
+			if !ok || len(jobs) == 0 {
+				return
 			}
-			return
+			p.start(ctx, jobs)
 		case <-p.jobsChannel:
 			p.numJobsActive.Add(-1)
 		}
@@ -79,17 +78,27 @@ func (p *producer) start(ctx context.Context, jobs []*JobRow) {
 			return
 		}
 
+		jobCtx, jobCancel := context.WithCancelCause(ctx)
+		// defer jobCancel()
+
 		p.done = p.handleWorkerDone
 		p.numJobsActive.Add(1)
 
-		go p.startWork(ctx, job, work)
+		go p.startWork(jobCtx, jobCancel, job, work)
 	}
 }
 
-func (p *producer) startWork(ctx context.Context, job *JobRow, work work) {
+func (p *producer) startWork(ctx context.Context, cancel context.CancelCauseFunc, job *JobRow, work work) {
+	defer cancel(errors.New("context cancelled as executor finished"))
+
 	defer func() {
+		p.numJobsActive.Add(-1)
 		if r := recover(); r != nil {
-			p.logger.ErrorContext(ctx, string(debug.Stack()))
+			p.logger.ErrorContext(ctx, "worker panic",
+				slog.Any("panic", r),
+				slog.Int64("job_id", job.ID),
+				slog.String("stack", string(debug.Stack())),
+			)
 		}
 	}()
 
@@ -117,10 +126,11 @@ func (p *producer) startWork(ctx context.Context, job *JobRow, work work) {
 	if err := work.work(ctx); err != nil {
 		msg := err.Error()
 		attempt = &AttemptError{
-			At:      time.Now(),
-			Attempt: job.Attempt,
-			Error:   msg,
-			Trace:   string(debug.Stack()),
+			ClientID: *p.clientID,
+			At:       time.Now(),
+			Attempt:  job.Attempt,
+			Error:    msg,
+			Trace:    string(debug.Stack()),
 		}
 
 		state = JobStateAvailable
@@ -128,8 +138,12 @@ func (p *producer) startWork(ctx context.Context, job *JobRow, work work) {
 			state = JobStateCancelled
 		}
 
-		p.logger.DebugContext(ctx, "Job failed", slog.Int64("job_id", job.ID), slog.String("kind", job.Kind),
-			slog.String("args", string(job.Args)), slog.String("error", msg))
+		p.logger.DebugContext(ctx, "Job failed",
+			slog.Int64("job_id", job.ID),
+			slog.String("kind", job.Kind),
+			slog.String("args", string(job.Args)),
+			slog.String("error", msg),
+		)
 	}
 
 	if err := p.storage.UpdateJobState(&job.ID, state, time.Now(), attempt); err != nil {
@@ -156,7 +170,7 @@ func (p *producer) handleWorkerDone(job *JobRow) {
 	p.jobsChannel <- job
 }
 
-func (p *producer) getJobAvailable(jobs chan<- []*JobRow, limit int32, clientID *ulid.ULID) {
+func (p *producer) getJobAvailable(jobs chan<- []*JobRow, limit int32, clientID *string) {
 	items, err := p.storage.GetJobAvailable(p.config.queueName, limit, clientID)
 	if err != nil {
 		panic(err)

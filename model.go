@@ -3,8 +3,6 @@ package synk
 import (
 	"database/sql"
 	"time"
-
-	"github.com/oklog/ulid/v2"
 )
 
 // JobRow represents a row in the job table, containing information about a specific job.
@@ -83,19 +81,15 @@ const (
 // It contains details about the time of the error, the attempt number,
 // the error message, and a stack trace if the job panicked.
 type AttemptError struct {
+	// ClientID is the ID of the client who used the job.
+	ClientID string `json:"client_id"`
 	// At is the time at which the error occurred.
 	At time.Time `json:"at"`
-
-	// Attempt is the attempt number on which the error occurred (maps to
-	// Attempt on a job row).
+	// Attempt is the attempt number on which the error occurred (maps to Attempt on a job row).
 	Attempt int `json:"attempt"`
-
-	// Error contains the stringified error of an error returned from a job or a
-	// panic value in case of a panic.
+	// Error contains the stringified error of an error returned from a job or a panic value in case of a panic.
 	Error string `json:"error"`
-
-	// Trace contains a stack trace from a job that panicked. The trace is
-	// produced by invoking `debug.Trace()`.
+	// Trace contains a stack trace from a job that panicked. The trace is produced by invoking `debug.Trace()`.
 	Trace string `json:"trace"`
 }
 
@@ -109,7 +103,7 @@ type Storage interface {
 	// GetJobAvailable retrieves a list of available jobs from the specified queue.
 	// It takes the name of the queue and a limit on the number of jobs to retrieve.
 	// It returns a slice of pointers to JobRow and an error if the operation fails.
-	GetJobAvailable(queue string, limit int32, clientID *ulid.ULID) ([]*JobRow, error)
+	GetJobAvailable(queue string, limit int32, clientID *string) ([]*JobRow, error)
 
 	// Insert adds a new job to the specified queue with the given kind and arguments
 	// within the context of the provided transaction. This allows the operation to be

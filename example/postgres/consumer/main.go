@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"log/slog"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/isaqueveras/synk"
@@ -33,6 +34,9 @@ func main() {
 	logg := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
 	var opts = []synk.Option{
+		// Sets the client ID for the configuration.
+		synk.WithClientID("consumidor01"),
+
 		// Sets the configuration for the queues to be used.
 		synk.WithQueue("default", synk.QueueConfigDefault),
 		synk.WithQueue("ownership", &synk.QueueConfig{
@@ -65,7 +69,9 @@ func main() {
 	defer cancel()
 
 	client := synk.NewClient(ctx, opts...)
-	defer client.Shutdown()
 
-	client.Start()
+	var wg sync.WaitGroup
+	wg.Go(client.Cleaner)
+	wg.Go(client.Start)
+	wg.Wait()
 }

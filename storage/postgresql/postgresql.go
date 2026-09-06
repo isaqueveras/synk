@@ -7,13 +7,12 @@ import (
 
 	"github.com/isaqueveras/synk"
 	"github.com/isaqueveras/synk/storage/postgresql/queries"
-
-	"github.com/oklog/ulid/v2"
 )
 
-// New creates a new instance of the storage repository using the provided
-// database connection. It returns an implementation of the storage.Storage interface.
-func New(db *sql.DB, timeouts ...time.Duration) synk.Storage {
+var _ synk.Storage = (*postgres)(nil)
+
+// New creates a new instance of the storage repository using the provided database connection.
+func New(db *sql.DB, timeouts ...time.Duration) *postgres {
 	timeout := time.Second * 5
 	if len(timeouts) != 0 {
 		timeout = timeouts[0]
@@ -41,25 +40,12 @@ func (pg *postgres) Ping() error {
 }
 
 // GetJobAvailable retrieves a list of available jobs from the specified queue with a limit on the number of jobs.
-func (pg *postgres) GetJobAvailable(queue string, limit int32, clientID *ulid.ULID) (items []*synk.JobRow, err error) {
-	ctx, cancel := context.WithTimeout(pg.ctx, pg.timeout)
-	defer cancel()
-
-	tx, err := pg.db.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback() // nolint
-
-	if items, err = pg.queries.GetJobAvailable(ctx, tx, queue, limit, clientID); err != nil {
-		return nil, err
-	}
-
-	if err = tx.Commit(); err != nil {
-		return nil, err
-	}
-
-	return items, nil
+func (pg *postgres) GetJobAvailable(queue string, limit int32, clientID *string) (items []*synk.JobRow, err error) {
+	err = pg.withTx(func(ctx context.Context, tx *sql.Tx) error {
+		items, err = pg.queries.GetJobAvailable(ctx, tx, queue, limit, clientID)
+		return err
+	})
+	return items, err
 }
 
 // Insert inserts a new job into the specified queue with the given kind and arguments

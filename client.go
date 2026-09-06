@@ -7,37 +7,38 @@ package synk
 
 import (
 	"context"
-	"crypto/rand"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"os"
 	"sync"
 	"time"
-
-	"github.com/oklog/ulid/v2"
 )
 
 // Client represents a Client that manages the configuration,
 // context, and producers for a specific task.
 type Client struct {
-	id  ulid.ULID
+	id  string
 	cfg *config
 	wg  sync.WaitGroup
 
 	producers map[string]*producer
 
-	ctx        context.Context
-	cancel     context.CancelFunc
+	ctx    context.Context
+	cancel context.CancelFunc
+
+	workCtx    context.Context
 	workCancel context.CancelFunc
 }
 
 type config struct {
-	queues  map[string]*QueueConfig
-	workers map[string]*workerInfo
-	cleaner *CleanerConfig
-	storage Storage
-	logger  *slog.Logger
+	clientID string
+	queues   map[string]*QueueConfig
+	workers  map[string]*workerInfo
+	cleaner  *CleanerConfig
+	storage  Storage
+	logger   *slog.Logger
 }
 
 // QueueConfigDefault is the default configuration for the queue system.
@@ -55,6 +56,8 @@ var QueueConfigDefault = &QueueConfig{
 type QueueConfig struct {
 	MaxWorkers uint16
 	TimeFetch  time.Duration
+
+	workCtx    context.Context
 	JobTimeout time.Duration
 }
 
@@ -62,13 +65,15 @@ type QueueConfig struct {
 // It initializes the client's configuration, queues, and workers. If no queues or workers are
 // configured, it panics. It also generates a unique client ID and sets up producers for each queue.
 func NewClient(ctx context.Context, opts ...Option) *Client {
+	ctx, cancel := context.WithCancel(ctx)
+
 	clt := &Client{
-		ctx:       ctx,
+		ctx: ctx, cancel: cancel,
 		producers: make(map[string]*producer),
 		cfg: &config{
 			queues:  make(map[string]*QueueConfig),
 			workers: make(map[string]*workerInfo),
-			logger:  slog.Default(),
+			logger:  slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelWarn})),
 		},
 	}
 
@@ -76,36 +81,27 @@ func NewClient(ctx context.Context, opts ...Option) *Client {
 		opt(clt.cfg)
 	}
 
-	clientID, err := ulid.New(ulid.Now(), rand.Reader)
-	if err != nil {
-		clt.cfg.logger.ErrorContext(ctx, "failed to create client ID: "+err.Error())
-		return nil
+	clt.id = clt.cfg.clientID
+	if clt.id == "" {
+		hostname, _ := os.Hostname()
+		clt.id = hostname + "_" + time.Now().Format(time.RFC3339)
 	}
 
-	clt.id = clientID
-	clt.cfg.logger = clt.cfg.logger.WithGroup("client").With(slog.String("id", clt.id.String()))
-
+	clt.cfg.logger = clt.cfg.logger.WithGroup("client").With(slog.String("id", clt.id))
 	if clt.cfg.storage == nil {
 		clt.cfg.logger.ErrorContext(ctx, "no storage configured")
-		return nil
+		return clt
 	}
 
 	if err := clt.cfg.storage.Ping(); err != nil {
 		clt.cfg.logger.ErrorContext(ctx, "failed to ping storage: "+err.Error())
-		return nil
-	}
-
-	if len(clt.cfg.queues) == 0 || clt.cfg.workers == nil {
-		clt.cfg.logger.DebugContext(ctx, "no queues or workers configured")
 		return clt
 	}
 
-	if clt.cfg.cleaner != nil {
-		clt.wg.Add(1)
-		go func() {
-			defer clt.wg.Done()
-			clt.cleaner(ctx, clt.cfg.cleaner)
-		}()
+	clt.workCtx, clt.workCancel = context.WithCancel(context.WithValue(ctx, ContextKeyClient{}, clt))
+	if len(clt.cfg.queues) == 0 || clt.cfg.workers == nil {
+		clt.cfg.logger.DebugContext(ctx, "no queues or workers configured")
+		return clt
 	}
 
 	for queue, config := range clt.cfg.queues {
@@ -121,7 +117,7 @@ func NewClient(ctx context.Context, opts ...Option) *Client {
 				maxWorkerCount: config.MaxWorkers,
 				timeFetch:      config.TimeFetch,
 				queueName:      queue,
-				workID:         clt.id.String(),
+				workID:         clt.id,
 				workers:        clt.cfg.workers,
 				jobTimeout:     config.JobTimeout,
 			},
@@ -131,20 +127,9 @@ func NewClient(ctx context.Context, opts ...Option) *Client {
 	return clt
 }
 
-// Shutdown cancels the client's context and stops any ongoing work.
-// It calls the cancel functions associated with the client to gracefully shut down any operations.
-func (c *Client) Shutdown() {
-	c.wg.Wait()
-
-	c.cfg.logger.Debug("Stopping client")
-	if c.cancel != nil {
-		c.cfg.logger.Debug("Stopping client context")
-		c.cancel()
-	}
-	if c.workCancel != nil {
-		c.cfg.logger.Debug("Stopping work cancel function")
-		c.workCancel()
-	}
+// Cleaner runs the cleaner function with the provided context and cleaner configuration.
+func (c *Client) Cleaner() {
+	c.cleaner(c.ctx, c.cfg.cleaner)
 }
 
 // Insert add a job into the queue to be processed.
@@ -199,34 +184,31 @@ func (c *Client) InsertTx(tx *sql.Tx, name string, params JobArgs, options ...*I
 // The method waits for all producers to complete their work before returning.
 // It also sets up a heartbeat mechanism to log the total number of completed jobs at regular intervals.
 func (c *Client) Start() {
-	c.ctx, c.cancel = context.WithCancel(c.ctx)
-
-	ctx, cancel := context.WithCancel(c.ctx)
-	c.workCancel = cancel
-
 	c.wg.Add(len(c.producers))
 	for _, producer := range c.producers {
+		pdc := producer
+
 		go func() {
 			defer c.wg.Done()
 
-			go producer.heartbeat(c.ctx)
+			go pdc.heartbeat(c.ctx)
 
 			jobs := make(chan []*JobRow)
 			for {
 				select {
 				case <-c.ctx.Done():
-					producer.logger.DebugContext(c.ctx, "Producer context done: "+c.ctx.Err().Error())
+					pdc.logger.DebugContext(c.ctx, "Producer context done: "+c.ctx.Err().Error())
 					return
-				case <-time.NewTicker(producer.config.timeFetch).C:
-					producer.process(ctx, jobs)
+				case <-time.NewTicker(pdc.config.timeFetch).C:
+					pdc.process(c.workCtx, jobs)
 					select {
 					case <-c.ctx.Done():
-						producer.logger.DebugContext(c.ctx, "Producer context done: "+c.ctx.Err().Error())
+						pdc.logger.DebugContext(c.ctx, "Producer context done: "+c.ctx.Err().Error())
 						return
 					default:
 					}
-				case <-producer.jobsChannel:
-					producer.numJobsActive.Add(-1)
+				case <-pdc.jobsChannel:
+					pdc.numJobsActive.Add(-1)
 				}
 			}
 		}()
@@ -326,4 +308,17 @@ func (c *Client) cleaner(ctx context.Context, clear *CleanerConfig) {
 			c.cfg.logger.InfoContext(ctx, "Total cleaned jobs", slog.Int64("jobs_cleaned", totalDeleted))
 		}
 	}
+}
+
+// ContextKeyClient is a context key used to store the client instance in the context.
+type ContextKeyClient struct{}
+
+// ClientFromContext returns the client instance from the context.
+// If the client is not found in the context, it returns an error.
+func ClientFromContext(ctx context.Context) (*Client, error) {
+	client, ok := ctx.Value(ContextKeyClient{}).(*Client)
+	if !ok || client == nil {
+		return nil, errors.New("client not found in context")
+	}
+	return client, nil
 }
