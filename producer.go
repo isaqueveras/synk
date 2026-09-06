@@ -40,11 +40,11 @@ func (p *producer) process(ctx context.Context, jobs chan []*JobRow) {
 
 	for {
 		select {
-		case jobs := <-jobs:
-			if len(jobs) != 0 {
-				p.start(ctx, jobs)
+		case jobs, ok := <-jobs:
+			if !ok || len(jobs) == 0 {
+				return
 			}
-			return
+			p.start(ctx, jobs)
 		case <-p.jobsChannel:
 			p.numJobsActive.Add(-1)
 		}
@@ -92,8 +92,13 @@ func (p *producer) startWork(ctx context.Context, cancel context.CancelCauseFunc
 	defer cancel(errors.New("context cancelled as executor finished"))
 
 	defer func() {
+		p.numJobsActive.Add(-1)
 		if r := recover(); r != nil {
-			p.logger.ErrorContext(ctx, string(debug.Stack()))
+			p.logger.ErrorContext(ctx, "worker panic",
+				slog.Any("panic", r),
+				slog.Int64("job_id", job.ID),
+				slog.String("stack", string(debug.Stack())),
+			)
 		}
 	}()
 
