@@ -1,6 +1,3 @@
--- CREATE SCHEMA IF NOT EXISTS synk;
--- SET search_path TO synk;
-
 CREATE TABLE queue (
   name text PRIMARY KEY,
   is_paused boolean NOT NULL DEFAULT false,
