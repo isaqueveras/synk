@@ -142,3 +142,16 @@ func (a *StringArray) Scan(src interface{}) error {
 	*a = res
 	return nil
 }
+
+// Queues represents a collection of queue configurations, where each queue
+// is identified by its name and associated with a QueueConfig.
+type Queues map[string]*QueueConfig
+
+// Names returns a StringArray containing the names of all queues in the Queues map.
+func (q Queues) Names() StringArray {
+	keys := make([]string, 0, len(q))
+	for k := range q {
+		keys = append(keys, k)
+	}
+	return StringArray(keys)
+}

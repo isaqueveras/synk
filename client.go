@@ -32,12 +32,12 @@ type client struct {
 }
 
 type config struct {
-	clientID string
-	queues   map[string]*QueueConfig
-	workers  map[string]*workerInfo
-	cleaner  *CleanerConfig
-	storage  Storage
-	logger   *slog.Logger
+	nodeID  string
+	queues  Queues
+	workers map[string]*workerInfo
+	cleaner *CleanerConfig
+	storage Storage
+	logger  *slog.Logger
 }
 
 // QueueConfigDefault is the default configuration for the queue system.
