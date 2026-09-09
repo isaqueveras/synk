@@ -32,7 +32,7 @@ type client struct {
 }
 
 type config struct {
-	nodeID  string
+	nodeID  NodeID
 	queues  Queues
 	workers map[string]*workerInfo
 	cleaner *CleanerConfig
@@ -84,26 +84,26 @@ func NewClient(ctx context.Context, opts ...Option) *client {
 	if clt.nodeID == "" {
 		hostname, err := os.Hostname()
 		if err != nil {
-			clt.cfg.logger.ErrorContext(ctx, "failed to get hostname: "+err.Error())
+			clt.cfg.logger.Error("failed to get hostname: " + err.Error())
 			hostname = "unknown"
 		}
-		clt.nodeID = hostname + "_" + time.Now().Format(time.RFC3339)
+		clt.nodeID = NodeID(hostname + "_" + time.Now().Format(time.RFC3339))
 	}
 
-	clt.cfg.logger = clt.cfg.logger.WithGroup("node").With(slog.String("id", clt.nodeID))
+	clt.cfg.logger = clt.cfg.logger.WithGroup("node").With(slog.String("id", clt.nodeID.String()))
 	if clt.cfg.storage == nil {
-		clt.cfg.logger.ErrorContext(ctx, "no storage configured")
+		clt.cfg.logger.Error("no storage configured")
 		return clt
 	}
 
 	if err := clt.cfg.storage.Ping(); err != nil {
-		clt.cfg.logger.ErrorContext(ctx, "failed to ping storage: "+err.Error())
+		clt.cfg.logger.Error("failed to ping storage: " + err.Error())
 		return clt
 	}
 
 	clt.workCtx, clt.workCancel = context.WithCancel(context.WithValue(ctx, ContextKeyClient{}, clt))
 	if len(clt.cfg.queues) == 0 || clt.cfg.workers == nil {
-		clt.cfg.logger.DebugContext(ctx, "no queues or workers configured")
+		clt.cfg.logger.Debug("no queues or workers configured")
 		return clt
 	}
 
@@ -175,8 +175,8 @@ func (c *client) InsertTx(tx *sql.Tx, name string, params JobArgs, options ...*I
 		return nil, err
 	}
 
-	c.cfg.logger.DebugContext(c.ctx, "job inserted into queue", slog.String("queue", option.Queue),
-		slog.Int64("job_id", *jobID), slog.String("kind", params.Kind()), slog.Any("args", params))
+	c.cfg.logger.Debug("job inserted into queue", slog.String("queue", option.Queue),
+		slog.Int64("job_id", int64(*jobID)), slog.String("kind", args.Kind()), slog.Any("args", args))
 
 	return jobID, nil
 }

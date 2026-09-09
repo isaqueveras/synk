@@ -7,22 +7,46 @@ import (
 	"time"
 )
 
+// JobID represents a unique identifier for a job in the queue system.
+// It is defined as an unsigned 64-bit integer.
+type JobID uint64
+
+// String returns the string representation of the JobID.
+func (id JobID) String() string {
+	return fmt.Sprintf("%d", id)
+}
+
+// NodeID represents a unique identifier for a node in the queue system.
+type NodeID string
+
+// String returns the string representation of the NodeID.
+func (n NodeID) String() string {
+	return string(n)
+}
+
+var (
+	// ErrJobNameRequired is returned when a job name is not provided during job enqueueing.
+	ErrJobNameRequired = errors.New("job name is required")
+	// ErrJobKindRequired is returned when a job kind is not provided during job enqueueing.
+	ErrJobKindRequired = errors.New("job kind is required")
+)
+
 // JobRow represents a row in the job table, containing information about a specific job.
 // It includes details such as the job ID, the number of attempts, the time of the last attempt,
 // the type of job, the queue it belongs to, the encoded arguments, the current state of the job,
 // and any errors that occurred during attempts.
 type JobRow struct {
-	ID        int64          `json:"id,omitempty"`
-	Name      string         `json:"name,omitempty"`
-	Attempt   int            `json:"attempt,omitempty"`
-	AttemptAt *time.Time     `json:"attempt_at,omitempty"`
-	Kind      string         `json:"kind,omitempty"`
-	Queue     string         `json:"queue,omitempty"`
-	DependsOn []int64        `json:"depends_on,omitempty"`
-	Args      []byte         `json:"args,omitempty"`
-	State     JobState       `json:"state,omitempty"`
-	Errors    []AttemptError `json:"errors,omitempty"`
-	Options   *InsertOptions `json:"options,omitempty"`
+	ID        JobID           `json:"id,omitempty"`
+	Name      string          `json:"name,omitempty"`
+	Attempt   int             `json:"attempt,omitempty"`
+	AttemptAt *time.Time      `json:"attempt_at,omitempty"`
+	Kind      string          `json:"kind,omitempty"`
+	Queue     string          `json:"queue,omitempty"`
+	DependsOn []int64         `json:"depends_on,omitempty"`
+	Args      []byte          `json:"args,omitempty"`
+	State     JobState        `json:"state,omitempty"`
+	Errors    []AttemptError  `json:"errors,omitempty"`
+	Options   *EnqueueOptions `json:"options,omitempty"`
 }
 
 // Priority represents the priority of a job.
@@ -64,7 +88,7 @@ type InsertOptions struct {
 	// This is useful for ensuring that jobs are executed in a specific order.
 	// For example, if job A depends on job B, and job B fails, job A will not be executed.
 	// If job B succeeds, job A will be executed.
-	DependsOn []*int64
+	DependsOn []JobID
 }
 
 // JobState represents the status of a job.

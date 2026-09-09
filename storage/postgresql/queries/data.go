@@ -45,8 +45,8 @@ WHERE job.id = jobs.id
 RETURNING job.id, job.args, job.kind, job.attempt, job.max_attempts;`
 
 // GetJobAvailable retrieves available jobs from the database and updates their state to 'running'.
-func (q *Queries) GetJobAvailable(ctx context.Context, tx *sql.Tx, queue string, limit int32, nodeID *string) ([]*synk.JobRow, error) {
-	rows, err := tx.QueryContext(ctx, getJobAvailableSQL, queue, limit, nodeID, nil)
+func (q *Queries) GetJobAvailable(ctx context.Context, tx *sql.Tx, queue string, limit int32, nodeID *synk.NodeID) ([]*synk.JobRow, error) {
+	rows, err := tx.QueryContext(ctx, getJobAvailableSQL, queue, limit, nodeID.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -54,7 +54,7 @@ func (q *Queries) GetJobAvailable(ctx context.Context, tx *sql.Tx, queue string,
 
 	jobs := make([]*synk.JobRow, 0)
 	for rows.Next() {
-		var job = &synk.JobRow{Options: &synk.InsertOptions{}, Queue: queue}
+		var job = &synk.JobRow{Options: &synk.EnqueueOptions{}, Queue: queue}
 		if err = rows.Scan(&job.ID, &job.Args, &job.Kind, &job.Attempt, &job.Options.MaxRetries); err != nil {
 			return nil, err
 		}
@@ -85,7 +85,7 @@ const updateJobStateSQLNoError = `UPDATE job SET state = $1, finalized_at = $2 W
 const updateJobStateSQLWithError = `UPDATE job SET state = $1, errors = array_append(errors, $2::jsonb) WHERE id = $3`
 
 // UpdateJobState updates the state of a job identified by its ID in the database
-func (q *Queries) UpdateJobState(ctx context.Context, tx *sql.Tx, jobID *int64, newState synk.JobState, finalizedAt time.Time, e *synk.AttemptError) error {
+func (q *Queries) UpdateJobState(ctx context.Context, tx *sql.Tx, jobID *synk.JobID, newState synk.JobState, finalizedAt time.Time, e *synk.AttemptError) error {
 	if e != nil {
 		errorJSON, err := json.Marshal(e)
 		if err != nil {
@@ -110,7 +110,7 @@ SET
 WHERE $1 = ANY(depends_on) AND state = 'pending';`
 
 // ResolveDependencies resolves dependencies for a job identified by its ID in the database
-func (q *Queries) ResolveDependencies(ctx context.Context, tx *sql.Tx, jobID *int64) error {
+func (q *Queries) ResolveDependencies(ctx context.Context, tx *sql.Tx, jobID *synk.JobID) error {
 	_, err := tx.ExecContext(ctx, resolveDependenciesSQL, jobID)
 	return err
 }
@@ -169,7 +169,7 @@ WHERE J.id = JL.id AND J.state != 'running'
 AND NOT (J.state = 'available' AND J.scheduled_at < now());`
 
 // Retry retries a job by its ID and returns an error if the operation fails.
-func (q *Queries) Retry(ctx context.Context, tx *sql.Tx, jobID *int64) error {
+func (q *Queries) Retry(ctx context.Context, tx *sql.Tx, jobID *synk.JobID) error {
 	_, err := tx.ExecContext(ctx, retrySQL, jobID)
 	return err
 }
@@ -177,7 +177,7 @@ func (q *Queries) Retry(ctx context.Context, tx *sql.Tx, jobID *int64) error {
 const deleteSQL = `DELETE FROM job WHERE id = $1;`
 
 // Delete deletes a job by its ID and returns an error if the operation fails.
-func (q *Queries) Delete(ctx context.Context, tx *sql.Tx, jobID *int64) error {
+func (q *Queries) Delete(ctx context.Context, tx *sql.Tx, jobID *synk.JobID) error {
 	_, err := tx.ExecContext(ctx, deleteSQL, jobID)
 	return err
 }
@@ -194,7 +194,7 @@ FROM job_locked JL
 WHERE J.id = JL.id AND J.state not in ('running', 'cancelled', 'completed');`
 
 // Cancel cancels a job by its ID and returns an error if the operation fails.
-func (q *Queries) Cancel(ctx context.Context, tx *sql.Tx, jobID *int64) error {
+func (q *Queries) Cancel(ctx context.Context, tx *sql.Tx, jobID *synk.JobID) error {
 	_, err := tx.ExecContext(ctx, cancelSQL, jobID)
 	return err
 }
@@ -206,11 +206,11 @@ ON CONFLICT (id) DO UPDATE SET last_heartbeat_at = NOW(), queues = EXCLUDED.queu
 
 // Heartbeat updates the heartbeat timestamp for a node in the database,
 // indicating that it is still active and processing jobs.
-func (q *Queries) Heartbeat(ctx context.Context, tx *sql.Tx, nodeID string, queues synk.StringArray) error {
+func (q *Queries) Heartbeat(ctx context.Context, tx *sql.Tx, nodeID *synk.NodeID, queues synk.StringArray) error {
 	hostname, err := os.Hostname()
 	if err != nil {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, heartbeatSQL, nodeID, hostname, os.Getpid(), queues)
+	_, err = tx.ExecContext(ctx, heartbeatSQL, nodeID.String(), hostname, os.Getpid(), queues)
 	return err
 }

@@ -11,7 +11,7 @@ import (
 )
 
 type producer struct {
-	nodeID        *string
+	nodeID        *NodeID
 	logger        *slog.Logger
 	jobsChannel   chan *JobRow
 	config        *producerConfig
@@ -57,11 +57,11 @@ func (p *producer) heartbeat(ctx context.Context, queues StringArray) {
 			p.logger.ErrorContext(ctx, "Heartbeat context done: "+ctx.Err().Error())
 			return
 		case <-ticker.C:
-			if err := p.storage.Heartbeat(*p.nodeID, queues); err != nil {
+			if err := p.storage.Heartbeat(p.nodeID, queues); err != nil {
 				p.logger.ErrorContext(ctx, "Failed to update heartbeat",
 					slog.String("error", err.Error()),
 					slog.String("queue", p.config.queueName),
-					slog.String("node_id", *p.nodeID))
+					slog.String("node_id", p.nodeID.String()))
 			}
 			p.logger.InfoContext(ctx, "Heartbeat: total completed jobs", slog.Int64("active_jobs", int64(p.numJobsActive.Load())))
 		}
@@ -77,7 +77,7 @@ func (p *producer) start(ctx context.Context, jobs []*JobRow) {
 
 		if work == nil {
 			p.logger.ErrorContext(ctx, "Worker not defined for this type",
-				slog.Int64("job_id", job.ID), slog.String("kind", job.Kind))
+				slog.Int64("job_id", int64(job.ID)), slog.String("kind", job.Kind))
 			return
 		}
 
@@ -98,14 +98,15 @@ func (p *producer) startWork(ctx context.Context, cancel context.CancelCauseFunc
 		if r := recover(); r != nil {
 			p.logger.ErrorContext(ctx, "worker panic",
 				slog.Any("panic", r),
-				slog.Int64("job_id", job.ID),
+				slog.Int64("job_id", int64(job.ID)),
 				slog.String("stack", string(debug.Stack())),
 			)
 		}
 	}()
 
 	if err := work.unmarshal(); err != nil {
-		p.logger.ErrorContext(ctx, "Failed to unmarshal job args", slog.Int64("job_id", job.ID), slog.String("error", err.Error()))
+		p.logger.ErrorContext(ctx, "Failed to unmarshal job args",
+			slog.Int64("job_id", int64(job.ID)), slog.String("error", err.Error()))
 		return
 	}
 
@@ -128,7 +129,7 @@ func (p *producer) startWork(ctx context.Context, cancel context.CancelCauseFunc
 	if err := work.work(ctx); err != nil {
 		msg := err.Error()
 		attempt = &AttemptError{
-			NodeID:  *p.nodeID,
+			NodeID:  p.nodeID.String(),
 			At:      time.Now(),
 			Attempt: job.Attempt,
 			Error:   msg,
@@ -141,7 +142,7 @@ func (p *producer) startWork(ctx context.Context, cancel context.CancelCauseFunc
 		}
 
 		p.logger.DebugContext(ctx, "Job failed",
-			slog.Int64("job_id", job.ID),
+			slog.Int64("job_id", int64(job.ID)),
 			slog.String("kind", job.Kind),
 			slog.String("args", string(job.Args)),
 			slog.String("error", msg),
@@ -153,7 +154,7 @@ func (p *producer) startWork(ctx context.Context, cancel context.CancelCauseFunc
 	}
 
 	p.logger.DebugContext(ctx, "Job completed",
-		slog.Int64("job_id", job.ID),
+		slog.Int64("job_id", int64(job.ID)),
 		slog.String("kind", job.Kind),
 		slog.String("args", string(job.Args)),
 	)
@@ -172,13 +173,13 @@ func (p *producer) handleWorkerDone(job *JobRow) {
 	p.jobsChannel <- job
 }
 
-func (p *producer) getJobAvailable(jobs chan<- []*JobRow, limit int32, nodeID *string) {
-	items, err := p.storage.GetJobAvailable(p.config.queueName, limit, nodeID)
+func (p *producer) getJobAvailable(jobs chan<- []*JobRow, limit int32, nodeID *NodeID) {
+	items, err := p.storage.GetJobAvailable(nodeID, p.config.queueName, limit)
 	if err != nil {
 		p.logger.Error("Failed to get available jobs",
 			slog.String("error", err.Error()),
 			slog.String("queue", p.config.queueName),
-			slog.String("node_id", *nodeID))
+			slog.String("node_id", nodeID.String()))
 		return
 	}
 	jobs <- items

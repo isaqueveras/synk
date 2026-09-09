@@ -19,7 +19,7 @@ type Option func(*config)
 // This is typically used to identify the node and its associated resources.
 func WithNodeID(id string) Option {
 	return func(cfg *config) {
-		cfg.nodeID = id
+		cfg.nodeID = NodeID(id)
 	}
 }
 

@@ -18,7 +18,7 @@ import (
 type Job[T JobArgs] struct {
 	// A pointer to a JobRow struct from the types package,
 	// which contains metadata about the job.
-	*JobRow
+	Job *JobRow
 
 	// Args arguments required to process the job, of type T.
 	Args T
@@ -125,7 +125,7 @@ func (w *wrapperWorkUnit[T]) timeout() time.Duration {
 // unmarshal deserializes the data contained in the wrapperWorkUnit into the appropriate
 // type T. It returns an error if the unmarshalling process fails.
 func (w *wrapperWorkUnit[T]) unmarshal() error {
-	w.job = &Job[T]{JobRow: w.row}
+	w.job = &Job[T]{Job: w.row}
 	if w.row != nil && w.row.Args == nil {
 		return fmt.Errorf("args is nil for job %d", w.row.ID)
 	}

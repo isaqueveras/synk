@@ -40,7 +40,7 @@ func (pg *postgres) Ping() error {
 }
 
 // GetJobAvailable retrieves a list of available jobs from the specified queue with a limit on the number of jobs.
-func (pg *postgres) GetJobAvailable(queue string, limit int32, nodeID *string) (items []*synk.JobRow, err error) {
+func (pg *postgres) GetJobAvailable(nodeID *synk.NodeID, queue string, limit int32) (items []*synk.JobRow, err error) {
 	err = pg.withTx(func(ctx context.Context, tx *sql.Tx) error {
 		items, err = pg.queries.GetJobAvailable(ctx, tx, queue, limit, nodeID)
 		return err
@@ -77,7 +77,7 @@ func (pg *postgres) Insert(tx *sql.Tx, params *synk.JobRow) (id *int64, err erro
 }
 
 // UpdateJobState updates the state, finalized_at, and error message of a job.
-func (pg *postgres) UpdateJobState(jobID *int64, newState synk.JobState, finalizedAt time.Time, e *synk.AttemptError) error {
+func (pg *postgres) UpdateJobState(jobID *synk.JobID, newState synk.JobState, finalizedAt time.Time, e *synk.AttemptError) error {
 	return pg.withTx(func(ctx context.Context, tx *sql.Tx) error {
 		if err := pg.queries.UpdateJobState(ctx, tx, jobID, newState, finalizedAt, e); err != nil {
 			return err
@@ -101,21 +101,21 @@ func (pg *postgres) Cleaner(clear *synk.CleanerConfig) (totalDeleted int64, err 
 }
 
 // Retry retries a job by its ID and returns an error if the operation fails.
-func (pg *postgres) Retry(jobID *int64) error {
+func (pg *postgres) Retry(jobID *synk.JobID) error {
 	return pg.withTx(func(ctx context.Context, tx *sql.Tx) error {
 		return pg.queries.Retry(ctx, tx, jobID)
 	})
 }
 
 // Cancel cancels a job by its ID and returns an error if the operation fails.
-func (pg *postgres) Cancel(jobID *int64) error {
+func (pg *postgres) Cancel(jobID *synk.JobID) error {
 	return pg.withTx(func(ctx context.Context, tx *sql.Tx) error {
 		return pg.queries.Cancel(ctx, tx, jobID)
 	})
 }
 
 // Delete deletes a job by its ID and returns an error if the operation fails.
-func (pg *postgres) Delete(jobID *int64) error {
+func (pg *postgres) Delete(jobID *synk.JobID) error {
 	return pg.withTx(func(ctx context.Context, tx *sql.Tx) error {
 		return pg.queries.Delete(ctx, tx, jobID)
 	})
@@ -123,7 +123,7 @@ func (pg *postgres) Delete(jobID *int64) error {
 
 // Heartbeat updates the heartbeat timestamp for a node in the database,
 // indicating that it is still active and processing jobs.
-func (pg *postgres) Heartbeat(nodeID string, queues []string) error {
+func (pg *postgres) Heartbeat(nodeID *synk.NodeID, queues []string) error {
 	return pg.withTx(func(ctx context.Context, tx *sql.Tx) error {
 		return pg.queries.Heartbeat(ctx, tx, nodeID, queues)
 	})
