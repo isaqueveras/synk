@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"database/sql"
-	"log"
 	"os"
 	"time"
 
@@ -27,35 +26,37 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	client := synk.NewClient(ctx, synk.WithClientID("produtor01"), synk.WithStorage(postgresql.New(db)))
+	client := synk.NewClient(ctx,
+		synk.WithNodeID("p_01M21PJSVMFYPBY0ZQWFQJXAKR"),
+		synk.WithStorage(postgresql.New(db)))
 
 	{ // Insert jobs with dependencies
-	opts := &synk.InsertOptions{
-		MaxRetries:  15,
-		Queue:       "ownership",
-		Priority:    synk.PriorityCritical,
-		ScheduledAt: time.Now().Add(time.Minute),
-	}
+		opts := &synk.InsertOptions{
+			MaxRetries:  15,
+			Queue:       "ownership",
+			Priority:    synk.PriorityCritical,
+			ScheduledAt: time.Now().Add(time.Minute),
+		}
 
-	criarbiometriaID, err := client.Insert("CriarBiometria", worker.BiometryArgs{}, opts)
-	if err != nil {
-		panic(err)
-	}
+		criarbiometriaID, err := client.Insert("CriarBiometria", worker.BiometryArgs{}, opts)
+		if err != nil {
+			panic(err)
+		}
 
-	opts.DependsOn = []*int64{criarbiometriaID}
-	criarContratoAtualTitularID, err := client.Insert("CriarContratoAtualTitular", worker.BiometryArgs{}, opts)
-	if err != nil {
-		panic(err)
-	}
+		opts.DependsOn = []*int64{criarbiometriaID}
+		criarContratoAtualTitularID, err := client.Insert("CriarContratoAtualTitular", worker.BiometryArgs{}, opts)
+		if err != nil {
+			panic(err)
+		}
 
-	criarContratoNovoTitularID, err := client.Insert("CriarContratoNovoTitular", worker.BiometryArgs{}, opts)
-	if err != nil {
-		panic(err)
-	}
+		criarContratoNovoTitularID, err := client.Insert("CriarContratoNovoTitular", worker.BiometryArgs{}, opts)
+		if err != nil {
+			panic(err)
+		}
 
-	opts.DependsOn = []*int64{criarContratoAtualTitularID, criarContratoNovoTitularID}
-	if _, err = client.Insert("CriarTermoCessão", worker.BiometryArgs{}, opts); err != nil {
-		panic(err)
-	}
+		opts.DependsOn = []*int64{criarContratoAtualTitularID, criarContratoNovoTitularID}
+		if _, err = client.Insert("CriarTermoCessão", worker.BiometryArgs{}, opts); err != nil {
+			panic(err)
+		}
 	}
 }
