@@ -53,10 +53,14 @@ type JobRow struct {
 type Priority int
 
 const (
+	// PriorityCritical represents the highest priority level for a job.
 	PriorityCritical Priority = 1
-	PriorityHigh     Priority = 2
-	PriorityMedium   Priority = 3
-	PriorityLow      Priority = 4
+	// PriorityHigh represents a high priority level for a job.
+	PriorityHigh Priority = 2
+	// PriorityMedium represents a medium priority level for a job.
+	PriorityMedium Priority = 3
+	// PriorityLow represents the lowest priority level for a job.
+	PriorityLow Priority = 4
 )
 
 // InsertOptions represents options for inserting a job into the queue.
