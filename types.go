@@ -1,7 +1,9 @@
 package synk
 
 import (
-	"database/sql"
+	"database/sql/driver"
+	"fmt"
+	"strings"
 	"time"
 )
 
@@ -81,8 +83,8 @@ const (
 // It contains details about the time of the error, the attempt number,
 // the error message, and a stack trace if the job panicked.
 type AttemptError struct {
-	// ClientID is the ID of the client who used the job.
-	ClientID string `json:"client_id"`
+	// NodeID is the ID of the node who used the job.
+	NodeID string `json:"node_id"`
 	// At is the time at which the error occurred.
 	At time.Time `json:"at"`
 	// Attempt is the attempt number on which the error occurred (maps to Attempt on a job row).
@@ -93,39 +95,50 @@ type AttemptError struct {
 	Trace string `json:"trace"`
 }
 
-// Storage is an interface that defines methods for interacting with job storage.
-// It provides a method to retrieve available jobs from a specified queue.
-type Storage interface {
-	// Ping checks the connection to the storage system.
-	// It returns an error if the connection is not successful.
-	Ping() error
+// StringArray is a custom type that represents an array of strings.
+type StringArray []string
 
-	// GetJobAvailable retrieves a list of available jobs from the specified queue.
-	// It takes the name of the queue and a limit on the number of jobs to retrieve.
-	// It returns a slice of pointers to JobRow and an error if the operation fails.
-	GetJobAvailable(queue string, limit int32, clientID *string) ([]*JobRow, error)
+// Value implements the driver.Valuer interface for StringArray.
+func (a StringArray) Value() (driver.Value, error) {
+	if len(a) == 0 {
+		return "{}", nil
+	}
+	quoted := make([]string, len(a))
+	for i, v := range a {
+		quoted[i] = fmt.Sprintf(`"%s"`, strings.ReplaceAll(v, `"`, `\"`))
+	}
+	return "{" + strings.Join(quoted, ",") + "}", nil
+}
 
-	// Insert adds a new job to the specified queue with the given kind and arguments
-	// within the context of the provided transaction. This allows the operation to be
-	// part of an atomic database transaction. It returns the ID of the inserted job
-	// and an error if the operation fails.
-	Insert(tx *sql.Tx, params *JobRow) (*int64, error)
+// Scan implements the sql.Scanner interface for StringArray.
+func (a *StringArray) Scan(src interface{}) error {
+	if src == nil {
+		*a = nil
+		return nil
+	}
 
-	// Cancel cancels a job by its ID and returns an error if the operation fails.
-	Cancel(jobID *int64) error
+	var source string
+	switch t := src.(type) {
+	case string:
+		source = t
+	case []byte:
+		source = string(t)
+	default:
+		return fmt.Errorf("invalid type for StringArray: %T", src)
+	}
 
-	// Retry retries a job by its ID and returns an error if the operation fails.
-	Retry(jobID *int64) error
+	str := strings.Trim(source, "{}")
+	if str == "" {
+		*a = []string{}
+		return nil
+	}
 
-	// Delete deletes a job by its ID and returns an error if the operation fails.
-	Delete(jobID *int64) error
+	elements := strings.Split(str, ",")
+	res := make([]string, len(elements))
+	for i, elem := range elements {
+		res[i] = strings.Trim(elem, `"`)
+	}
 
-	// UpdateJobState updates the state of a job identified by its ID.
-	// It takes the job ID, the new state, an optional finalized time, and an
-	// optional error message. It returns an error if the update fails.
-	UpdateJobState(jobID *int64, newState JobState, finalizedAt time.Time, e *AttemptError) error
-
-	// Cleaner is a method for cleaning up expired jobs based on their state and age.
-	// It takes a CleanerConfig struct as input and returns an error if the cleanup fails.
-	Cleaner(*CleanerConfig) (int64, error)
+	*a = res
+	return nil
 }
