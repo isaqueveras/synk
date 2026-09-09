@@ -3,6 +3,7 @@ package synk
 import (
 	"database/sql"
 	"database/sql/driver"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
