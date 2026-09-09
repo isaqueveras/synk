@@ -26,25 +26,23 @@ func (BiometryArgs) Kind() string {
 	return "biometry"
 }
 
+// BiometryWorker implements the Worker interface for biometry jobs.
+type BiometryWorker[T synk.JobArgs] struct{}
+
 // NewBiometry returns a new instance of a biometry worker.
 // This worker will process jobs of type BiometryArgs.
 func NewBiometry() synk.Worker[BiometryArgs] {
-	return &biometryWorker{}
-}
-
-// biometryWorker implements the Synk Worker interface for biometry jobs.
-type biometryWorker struct {
-	synk.WorkerDefaults[BiometryArgs]
+	return &BiometryWorker[BiometryArgs]{}
 }
 
 // Work processes a biometry job.
 // It simulates a random processing time between 0 and 9 seconds.
 // If the random time is less than 3 seconds, it returns an error to simulate a failure.
 // Otherwise, it sleeps for the random duration and returns success.
-func (biometryWorker) Work(ctx context.Context, job *synk.Job[BiometryArgs]) error {
+func (BiometryWorker[T]) Work(ctx context.Context, in *synk.Job[BiometryArgs]) error {
 	random := time.Duration(rand.Intn(10))
 	if random < 3 {
-		return fmt.Errorf("error processing biometry job: %d", job.ID)
+		return fmt.Errorf("error processing biometry job: %d", in.Job.ID)
 	}
 
 	time.Sleep(time.Second * random)
@@ -65,4 +63,15 @@ func (biometryWorker) Work(ctx context.Context, job *synk.Job[BiometryArgs]) err
 	}
 
 	return nil
+}
+
+// NextRetry returns the time at which the biometry job should be retried.
+// In this implementation, it returns a time 5 minutes from the current time.
+func (BiometryWorker[T]) NextRetry(*synk.Job[T]) time.Time {
+	return time.Now().Add(time.Minute * 5)
+}
+
+// Timeout returns the duration after which the biometry job should be considered timed out.
+func (BiometryWorker[T]) Timeout(*synk.Job[T]) time.Duration {
+	return time.Minute * 2
 }
