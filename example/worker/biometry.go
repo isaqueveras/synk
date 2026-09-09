@@ -54,10 +54,13 @@ func (biometryWorker) Work(ctx context.Context, job *synk.Job[BiometryArgs]) err
 		if err != nil {
 			return err
 		}
-		_, err = client.Insert("MinhaTarefa", BiometryArgs{
+
+		args := BiometryArgs{
 			BiometryID: "asdasdas",
 			CustomerID: "sdfsdfds",
-		})
+		}
+
+		_, err = client.Enqueue(ctx, "MinhaTarefa", args, in.Job.Options)
 		return err
 	}
 

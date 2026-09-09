@@ -48,22 +48,24 @@ func (pg *postgres) GetJobAvailable(nodeID *synk.NodeID, queue string, limit int
 	return items, err
 }
 
-// Insert inserts a new job into the specified queue with the given kind and arguments
+// Enqueue inserts a new job into the specified queue with the given kind and arguments
 // within the context of the provided transaction.
 // This allows the operation to be part of an atomic database transaction.
-func (pg *postgres) Insert(tx *sql.Tx, params *synk.JobRow) (id *int64, err error) {
+func (pg *postgres) Enqueue(ctx context.Context, tx *sql.Tx, params *synk.JobRow) (*synk.JobID, error) {
 	ctx, cancel := context.WithTimeout(pg.ctx, pg.timeout)
 	defer cancel()
 
 	var newTx = tx
 	if tx == nil {
+		var err error
 		if newTx, err = pg.db.BeginTx(ctx, nil); err != nil {
 			return nil, err
 		}
 		defer func() { _ = newTx.Rollback() }()
 	}
 
-	if id, err = pg.queries.Insert(ctx, newTx, params); err != nil {
+	id, err := pg.queries.Enqueue(ctx, newTx, params)
+	if err != nil {
 		return nil, err
 	}
 

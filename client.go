@@ -7,7 +7,6 @@ package synk
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -17,7 +16,7 @@ import (
 )
 
 type client struct {
-	nodeID string
+	nodeID NodeID
 
 	cfg *config
 	wg  sync.WaitGroup
@@ -129,63 +128,52 @@ func NewClient(ctx context.Context, opts ...Option) *client {
 	return clt
 }
 
-// Cleaner runs the cleaner function with the provided context and cleaner configuration.
-func (c *client) Cleaner() {
-	c.cleaner(c.ctx, c.cfg.cleaner)
-}
-
-// Insert add a job into the queue to be processed.
-// If no options are provided, it will use the default options.
-func (c *client) Insert(name string, params JobArgs, options ...*InsertOptions) (*int64, error) {
-	return c.InsertTx(nil, name, params, options...)
-}
-
-// InsertTx adds a job into the specified queue within the context of the provided
+// Enqueue adds a job into the specified queue within the context of the provided
 // transaction, allowing the operation to be part of an atomic database transaction.
-func (c *client) InsertTx(tx *sql.Tx, name string, params JobArgs, options ...*InsertOptions) (id *int64, err error) {
+func (c *client) Enqueue(ctx context.Context, name string, args JobArgs, options ...*EnqueueOptions) (JobID, error) {
 	state, option, err := getOptionsOrDefault(options...)
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
 
 	if name == "" {
-		return nil, errors.New("job name is required")
+		return 0, ErrJobNameRequired
 	}
 
-	if params.Kind() == "" {
-		return nil, errors.New("job kind is required")
+	if args.Kind() == "" {
+		return 0, ErrJobKindRequired
 	}
 
 	row := &JobRow{
 		Name:    name,
-		Kind:    params.Kind(),
+		Kind:    args.Kind(),
 		Queue:   option.Queue,
 		State:   state,
 		Options: option,
 	}
 
-	if row.Args, err = json.Marshal(params); err != nil {
-		return nil, err
+	if row.Args, err = json.Marshal(args); err != nil {
+		return 0, err
 	}
 
-	var jobID *int64
-	if jobID, err = c.cfg.storage.Insert(tx, row); err != nil {
-		c.cfg.logger.DebugContext(c.ctx, "failed to insert job into queue", slog.String("error", err.Error()),
-			slog.String("queue", option.Queue), slog.String("kind", params.Kind()), slog.Any("args", params))
-		return nil, err
+	var jobID *JobID
+	if jobID, err = c.cfg.storage.Enqueue(ctx, option.Transaction, row); err != nil {
+		c.cfg.logger.Debug("failed to insert job into queue", slog.String("error", err.Error()),
+			slog.String("queue", option.Queue), slog.String("kind", args.Kind()), slog.Any("args", args))
+		return 0, err
 	}
 
 	c.cfg.logger.Debug("job inserted into queue", slog.String("queue", option.Queue),
 		slog.Int64("job_id", int64(*jobID)), slog.String("kind", args.Kind()), slog.Any("args", args))
 
-	return jobID, nil
+	return *jobID, nil
 }
 
-// Start it initializes the client's context and starts the producers for each queue.
+// Run it initializes the client's context and starts the producers for each queue.
 // Each producer runs in a separate goroutine, fetching and processing jobs according to its configuration.
 // The method waits for all producers to complete their work before returning.
 // It also sets up a heartbeat mechanism to log the total number of completed jobs at regular intervals.
-func (c *client) Start() {
+func (c *client) Run() {
 	c.wg.Add(len(c.producers))
 	for _, producer := range c.producers {
 		pdc := producer
@@ -225,91 +213,50 @@ func (c *client) Start() {
 	c.wg.Wait()
 }
 
-// Cancel cancels a job by its ID.
-func (c *client) Cancel(ctx context.Context, jobID *int64) error {
-	return c.cfg.storage.Cancel(jobID)
-}
-
-// Retry retries a job by its ID.
-func (c *client) Retry(ctx context.Context, jobID *int64) error {
-	return c.cfg.storage.Retry(jobID)
-}
-
-// Delete deletes a job by its ID.
-func (c *client) Delete(ctx context.Context, jobID *int64) error {
-	return c.cfg.storage.Delete(jobID)
-}
-
-func getOptionsOrDefault(options ...*InsertOptions) (JobState, *InsertOptions, error) {
-	opts := &InsertOptions{}
-	if len(options) > 0 {
-		opts = options[0]
-	}
-
-	if (opts.Priority > PriorityLow) || (opts.Priority < PriorityCritical) {
-		return JobStateCancelled, nil, errors.New("priority must be between 1 and 4")
-	}
-
-	if opts.Priority == 0 {
-		opts.Priority = PriorityMedium
-	}
-
-	state := JobStateAvailable
-	if !opts.ScheduledAt.IsZero() {
-		state = JobStateScheduled
-	}
-
-	if opts.ScheduledAt.IsZero() || opts.ScheduledAt.Before(time.Now()) {
-		opts.ScheduledAt = time.Now().UTC()
-	}
-
-	if opts.MaxRetries == 0 {
-		opts.MaxRetries = 7
-	}
-
-	if opts.Pending || len(opts.DependsOn) > 0 {
-		state = JobStatePending
-	}
-
-	if opts.Queue == "" {
-		opts.Queue = "default"
-	}
-
-	if opts.DependsOn == nil {
-		opts.DependsOn = []*int64{}
-	}
-
-	return state, opts, nil
-}
-
-func (c *client) cleaner(ctx context.Context, clear *CleanerConfig) {
+// RunCleaner runs the cleaner function with the provided context and cleaner configuration.
+func (c *client) RunCleaner() {
 	if c.cfg.cleaner.CleanInterval == 0 {
-		c.cfg.logger.ErrorContext(ctx, "cleaner interval is required")
+		c.cfg.logger.Error("cleaner interval is required")
 		return
 	}
 
 	if c.cfg.cleaner.ByStatus == nil {
-		c.cfg.logger.ErrorContext(ctx, "cleaner by status is required")
+		c.cfg.logger.Error("cleaner by status is required")
 		return
 	}
 
-	ticker := time.NewTicker(clear.CleanInterval)
+	ticker := time.NewTicker(c.cfg.cleaner.CleanInterval)
 	defer ticker.Stop()
 
 	for {
 		select {
-		case <-ctx.Done():
-			c.cfg.logger.ErrorContext(ctx, "Heartbeat context done: "+ctx.Err().Error())
+		case <-c.ctx.Done():
+			c.cfg.logger.Error("Heartbeat context done: " + c.ctx.Err().Error())
 			return
 		case <-ticker.C:
-			totalDeleted, err := c.cfg.storage.Cleaner(clear)
+			totalDeleted, err := c.cfg.storage.Cleaner(c.cfg.cleaner)
 			if err != nil {
-				c.cfg.logger.ErrorContext(ctx, "failed to clean jobs", slog.String("error", err.Error()))
+				c.cfg.logger.Error("failed to clean jobs", slog.String("error", err.Error()))
 				continue
 			}
-			c.cfg.logger.InfoContext(ctx, "Total cleaned jobs", slog.Int64("jobs_cleaned", totalDeleted))
+			c.cfg.logger.Info("Total cleaned jobs", slog.Int64("jobs_cleaned", totalDeleted))
 		}
 	}
+}
+
+// CancelJob cancels a job by its ID.
+func (c *client) CancelJob(ctx context.Context, jobID JobID) error {
+	return c.cfg.storage.Cancel(&jobID)
+}
+
+// RetryJob retries a job by its ID.
+func (c *client) RetryJob(ctx context.Context, jobID JobID) error {
+	return c.cfg.storage.Retry(&jobID)
+}
+
+// DeleteJob deletes a job by its ID.
+func (c *client) DeleteJob(ctx context.Context, jobID JobID) error {
+	return c.cfg.storage.Delete(&jobID)
 }
 
 // ContextKeyClient is a context key used to store the client instance in the context.

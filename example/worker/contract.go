@@ -41,10 +41,10 @@ type contractWorker struct {
 // It simulates a random processing time between 0 and 9 seconds.
 // If the random time is less than 3 seconds, it returns an error to simulate a failure.
 // Otherwise, it sleeps for the random duration and returns success.
-func (w contractWorker) Work(ctx context.Context, job *synk.Job[ContractArgs]) error {
+func (w contractWorker) Work(ctx context.Context, in *synk.Job[ContractArgs]) error {
 	random := time.Duration(rand.Intn(10))
 	if random < 3 {
-		return fmt.Errorf("error processing contract job: %d", job.ID)
+		return fmt.Errorf("error processing contract job: %d", in.Job.ID)
 	}
 
 	time.Sleep(time.Second * random)
@@ -54,7 +54,7 @@ func (w contractWorker) Work(ctx context.Context, job *synk.Job[ContractArgs]) e
 		if err != nil {
 			return err
 		}
-		return client.Retry(ctx, &job.ID)
+		return client.CancelJob(ctx, in.Job.ID)
 	}
 
 	return nil

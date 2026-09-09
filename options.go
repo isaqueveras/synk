@@ -5,6 +5,7 @@
 package synk
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -106,4 +107,46 @@ func WithLogger(logger *slog.Logger) Option {
 	return func(cfg *config) {
 		cfg.logger = logger
 	}
+}
+
+func getOptionsOrDefault(options ...*EnqueueOptions) (JobState, *EnqueueOptions, error) {
+	opts := &EnqueueOptions{}
+	if len(options) > 0 {
+		opts = options[0]
+	}
+
+	if (opts.Priority > PriorityLow) || (opts.Priority < PriorityCritical) {
+		return JobStateCancelled, nil, errors.New("priority must be between 1 and 4")
+	}
+
+	if opts.Priority == 0 {
+		opts.Priority = PriorityMedium
+	}
+
+	state := JobStateAvailable
+	if !opts.ScheduledAt.IsZero() {
+		state = JobStateScheduled
+	}
+
+	if opts.ScheduledAt.IsZero() || opts.ScheduledAt.Before(time.Now()) {
+		opts.ScheduledAt = time.Now().UTC()
+	}
+
+	if opts.MaxRetries == 0 {
+		opts.MaxRetries = 7
+	}
+
+	if opts.Pending || len(opts.DependsOn) > 0 {
+		state = JobStatePending
+	}
+
+	if opts.Queue == "" {
+		opts.Queue = "default"
+	}
+
+	if opts.DependsOn == nil {
+		opts.DependsOn = []JobID{}
+	}
+
+	return state, opts, nil
 }

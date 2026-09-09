@@ -31,32 +31,34 @@ func main() {
 		synk.WithStorage(postgresql.New(db)))
 
 	{ // Insert jobs with dependencies
-		opts := &synk.InsertOptions{
+		opts := &synk.EnqueueOptions{
 			MaxRetries:  15,
 			Queue:       "ownership",
 			Priority:    synk.PriorityCritical,
 			ScheduledAt: time.Now().Add(time.Minute),
 		}
 
-		criarbiometriaID, err := client.Insert("CriarBiometria", worker.BiometryArgs{}, opts)
+		criarbiometriaID, err := client.Enqueue(ctx, "CriarBiometria", worker.BiometryArgs{}, opts)
 		if err != nil {
 			panic(err)
 		}
 
-		opts.DependsOn = []*int64{criarbiometriaID}
-		criarContratoAtualTitularID, err := client.Insert("CriarContratoAtualTitular", worker.BiometryArgs{}, opts)
+		opts.DependsOn = []synk.JobID{criarbiometriaID}
+		criarContratoAtualTitularID, err := client.Enqueue(ctx, "CriarContratoAtualTitular", worker.BiometryArgs{}, opts)
 		if err != nil {
 			panic(err)
 		}
 
-		criarContratoNovoTitularID, err := client.Insert("CriarContratoNovoTitular", worker.BiometryArgs{}, opts)
+		criarContratoNovoTitularID, err := client.Enqueue(ctx, "CriarContratoNovoTitular", worker.BiometryArgs{}, opts)
 		if err != nil {
 			panic(err)
 		}
 
-		opts.DependsOn = []*int64{criarContratoAtualTitularID, criarContratoNovoTitularID}
-		if _, err = client.Insert("CriarTermoCessão", worker.BiometryArgs{}, opts); err != nil {
+		opts.DependsOn = []synk.JobID{criarContratoAtualTitularID, criarContratoNovoTitularID}
+		if _, err = client.Enqueue(ctx, "CriarTermoCessão", worker.BiometryArgs{}, opts); err != nil {
 			panic(err)
 		}
 	}
+
+	time.Sleep(time.Hour)
 }

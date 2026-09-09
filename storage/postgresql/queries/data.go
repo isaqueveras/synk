@@ -68,14 +68,14 @@ func (q *Queries) GetJobAvailable(ctx context.Context, tx *sql.Tx, queue string,
 	return jobs, nil
 }
 
-const insertSQL = `
+const enqueueSQL = `
 INSERT INTO job (queue, kind, args, max_attempts, state, scheduled_at, priority, name, depends_on, remaining_dependencies)
 VALUES ($1, $2, $3::jsonb, $4, $5, $6, $7, $8, $9::bigint[], COALESCE(array_length($9::bigint[], 1), 0))
 RETURNING id;`
 
-// Insert inserts a new job into the database with the specified queue, kind, and arguments.
-func (q *Queries) Insert(ctx context.Context, tx *sql.Tx, job *synk.JobRow) (id *int64, err error) {
-	err = tx.QueryRowContext(ctx, insertSQL, job.Queue, job.Kind, job.Args, job.Options.MaxRetries,
+// Enqueue inserts a new job into the database with the specified queue, kind, and arguments.
+func (q *Queries) Enqueue(ctx context.Context, tx *sql.Tx, job *synk.JobRow) (id *synk.JobID, err error) {
+	err = tx.QueryRowContext(ctx, enqueueSQL, job.Queue, job.Kind, job.Args, job.Options.MaxRetries,
 		job.State, job.Options.ScheduledAt, job.Options.Priority, job.Name, job.Options.DependsOn,
 	).Scan(&id)
 	return id, err
