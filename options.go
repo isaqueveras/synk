@@ -15,11 +15,11 @@ import (
 // of the application by applying various options.
 type Option func(*config)
 
-// WithClientID sets the client ID for the configuration.
-// This is typically used to identify the client and its associated resources.
-func WithClientID(id string) Option {
+// WithNodeID sets the node ID for the configuration.
+// This is typically used to identify the node and its associated resources.
+func WithNodeID(id string) Option {
 	return func(cfg *config) {
-		cfg.clientID = id
+		cfg.nodeID = id
 	}
 }
 

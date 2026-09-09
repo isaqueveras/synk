@@ -29,6 +29,7 @@ func main() {
 
 	client := synk.NewClient(ctx, synk.WithClientID("produtor01"), synk.WithStorage(postgresql.New(db)))
 
+	{ // Insert jobs with dependencies
 	opts := &synk.InsertOptions{
 		MaxRetries:  15,
 		Queue:       "ownership",
@@ -56,13 +57,5 @@ func main() {
 	if _, err = client.Insert("CriarTermoCessão", worker.BiometryArgs{}, opts); err != nil {
 		panic(err)
 	}
-
-	time.Sleep(time.Minute)
-
-	log.Print("retrying job")
-	if err := client.Retry(ctx, criarbiometriaID); err != nil {
-		panic(err)
 	}
-
-	time.Sleep(time.Minute)
 }

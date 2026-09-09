@@ -16,10 +16,9 @@ import (
 	"time"
 )
 
-// Client represents a Client that manages the configuration,
-// context, and producers for a specific task.
-type Client struct {
-	id  string
+type client struct {
+	nodeID string
+
 	cfg *config
 	wg  sync.WaitGroup
 
@@ -64,10 +63,10 @@ type QueueConfig struct {
 // NewClient creates a new instance of worker with the provided context and options.
 // It initializes the client's configuration, queues, and workers. If no queues or workers are
 // configured, it panics. It also generates a unique client ID and sets up producers for each queue.
-func NewClient(ctx context.Context, opts ...Option) *Client {
+func NewClient(ctx context.Context, opts ...Option) *client {
 	ctx, cancel := context.WithCancel(ctx)
 
-	clt := &Client{
+	clt := &client{
 		ctx: ctx, cancel: cancel,
 		producers: make(map[string]*producer),
 		cfg: &config{
@@ -81,13 +80,17 @@ func NewClient(ctx context.Context, opts ...Option) *Client {
 		opt(clt.cfg)
 	}
 
-	clt.id = clt.cfg.clientID
-	if clt.id == "" {
-		hostname, _ := os.Hostname()
-		clt.id = hostname + "_" + time.Now().Format(time.RFC3339)
+	clt.nodeID = clt.cfg.nodeID
+	if clt.nodeID == "" {
+		hostname, err := os.Hostname()
+		if err != nil {
+			clt.cfg.logger.ErrorContext(ctx, "failed to get hostname: "+err.Error())
+			hostname = "unknown"
+		}
+		clt.nodeID = hostname + "_" + time.Now().Format(time.RFC3339)
 	}
 
-	clt.cfg.logger = clt.cfg.logger.WithGroup("client").With(slog.String("id", clt.id))
+	clt.cfg.logger = clt.cfg.logger.WithGroup("node").With(slog.String("id", clt.nodeID))
 	if clt.cfg.storage == nil {
 		clt.cfg.logger.ErrorContext(ctx, "no storage configured")
 		return clt
@@ -107,7 +110,7 @@ func NewClient(ctx context.Context, opts ...Option) *Client {
 	for queue, config := range clt.cfg.queues {
 		logger := clt.cfg.logger.WithGroup("producer").With(slog.String("queue", queue))
 		clt.producers[queue] = &producer{
-			clientID:    &clt.id,
+			nodeID:      &clt.nodeID,
 			logger:      logger,
 			workers:     clt.cfg.workers,
 			storage:     clt.cfg.storage,
@@ -117,7 +120,6 @@ func NewClient(ctx context.Context, opts ...Option) *Client {
 				maxWorkerCount: config.MaxWorkers,
 				timeFetch:      config.TimeFetch,
 				queueName:      queue,
-				workID:         clt.id,
 				workers:        clt.cfg.workers,
 				jobTimeout:     config.JobTimeout,
 			},
@@ -128,19 +130,19 @@ func NewClient(ctx context.Context, opts ...Option) *Client {
 }
 
 // Cleaner runs the cleaner function with the provided context and cleaner configuration.
-func (c *Client) Cleaner() {
+func (c *client) Cleaner() {
 	c.cleaner(c.ctx, c.cfg.cleaner)
 }
 
 // Insert add a job into the queue to be processed.
 // If no options are provided, it will use the default options.
-func (c *Client) Insert(name string, params JobArgs, options ...*InsertOptions) (*int64, error) {
+func (c *client) Insert(name string, params JobArgs, options ...*InsertOptions) (*int64, error) {
 	return c.InsertTx(nil, name, params, options...)
 }
 
 // InsertTx adds a job into the specified queue within the context of the provided
 // transaction, allowing the operation to be part of an atomic database transaction.
-func (c *Client) InsertTx(tx *sql.Tx, name string, params JobArgs, options ...*InsertOptions) (id *int64, err error) {
+func (c *client) InsertTx(tx *sql.Tx, name string, params JobArgs, options ...*InsertOptions) (id *int64, err error) {
 	state, option, err := getOptionsOrDefault(options...)
 	if err != nil {
 		return nil, err
@@ -183,7 +185,7 @@ func (c *Client) InsertTx(tx *sql.Tx, name string, params JobArgs, options ...*I
 // Each producer runs in a separate goroutine, fetching and processing jobs according to its configuration.
 // The method waits for all producers to complete their work before returning.
 // It also sets up a heartbeat mechanism to log the total number of completed jobs at regular intervals.
-func (c *Client) Start() {
+func (c *client) Start() {
 	c.wg.Add(len(c.producers))
 	for _, producer := range c.producers {
 		pdc := producer
@@ -191,7 +193,7 @@ func (c *Client) Start() {
 		go func() {
 			defer c.wg.Done()
 
-			go pdc.heartbeat(c.ctx)
+			go pdc.heartbeat(c.ctx, c.cfg.queues.Names())
 
 			jobs := make(chan []*JobRow)
 			for {
@@ -224,17 +226,17 @@ func (c *Client) Start() {
 }
 
 // Cancel cancels a job by its ID.
-func (c *Client) Cancel(ctx context.Context, jobID *int64) error {
+func (c *client) Cancel(ctx context.Context, jobID *int64) error {
 	return c.cfg.storage.Cancel(jobID)
 }
 
 // Retry retries a job by its ID.
-func (c *Client) Retry(ctx context.Context, jobID *int64) error {
+func (c *client) Retry(ctx context.Context, jobID *int64) error {
 	return c.cfg.storage.Retry(jobID)
 }
 
 // Delete deletes a job by its ID.
-func (c *Client) Delete(ctx context.Context, jobID *int64) error {
+func (c *client) Delete(ctx context.Context, jobID *int64) error {
 	return c.cfg.storage.Delete(jobID)
 }
 
@@ -280,7 +282,7 @@ func getOptionsOrDefault(options ...*InsertOptions) (JobState, *InsertOptions, e
 	return state, opts, nil
 }
 
-func (c *Client) cleaner(ctx context.Context, clear *CleanerConfig) {
+func (c *client) cleaner(ctx context.Context, clear *CleanerConfig) {
 	if c.cfg.cleaner.CleanInterval == 0 {
 		c.cfg.logger.ErrorContext(ctx, "cleaner interval is required")
 		return
@@ -315,8 +317,8 @@ type ContextKeyClient struct{}
 
 // ClientFromContext returns the client instance from the context.
 // If the client is not found in the context, it returns an error.
-func ClientFromContext(ctx context.Context) (*Client, error) {
-	client, ok := ctx.Value(ContextKeyClient{}).(*Client)
+func ClientFromContext(ctx context.Context) (*client, error) {
+	client, ok := ctx.Value(ContextKeyClient{}).(*client)
 	if !ok || client == nil {
 		return nil, errors.New("client not found in context")
 	}

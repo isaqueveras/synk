@@ -40,9 +40,9 @@ func (pg *postgres) Ping() error {
 }
 
 // GetJobAvailable retrieves a list of available jobs from the specified queue with a limit on the number of jobs.
-func (pg *postgres) GetJobAvailable(queue string, limit int32, clientID *string) (items []*synk.JobRow, err error) {
+func (pg *postgres) GetJobAvailable(queue string, limit int32, nodeID *string) (items []*synk.JobRow, err error) {
 	err = pg.withTx(func(ctx context.Context, tx *sql.Tx) error {
-		items, err = pg.queries.GetJobAvailable(ctx, tx, queue, limit, clientID)
+		items, err = pg.queries.GetJobAvailable(ctx, tx, queue, limit, nodeID)
 		return err
 	})
 	return items, err
@@ -118,6 +118,14 @@ func (pg *postgres) Cancel(jobID *int64) error {
 func (pg *postgres) Delete(jobID *int64) error {
 	return pg.withTx(func(ctx context.Context, tx *sql.Tx) error {
 		return pg.queries.Delete(ctx, tx, jobID)
+	})
+}
+
+// Heartbeat updates the heartbeat timestamp for a node in the database,
+// indicating that it is still active and processing jobs.
+func (pg *postgres) Heartbeat(nodeID string, queues []string) error {
+	return pg.withTx(func(ctx context.Context, tx *sql.Tx) error {
+		return pg.queries.Heartbeat(ctx, tx, nodeID, queues)
 	})
 }
 
