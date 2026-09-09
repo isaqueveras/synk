@@ -41,11 +41,25 @@ type biometryWorker struct {
 // It simulates a random processing time between 0 and 9 seconds.
 // If the random time is less than 3 seconds, it returns an error to simulate a failure.
 // Otherwise, it sleeps for the random duration and returns success.
-func (biometryWorker) Work(_ context.Context, job *synk.Job[BiometryArgs]) error {
+func (biometryWorker) Work(ctx context.Context, job *synk.Job[BiometryArgs]) error {
 	random := time.Duration(rand.Intn(10))
 	if random < 3 {
 		return fmt.Errorf("error processing biometry job: %d", job.ID)
 	}
+
 	time.Sleep(time.Second * random)
+
+	if random == 2 {
+		client, err := synk.ClientFromContext(ctx)
+		if err != nil {
+			return err
+		}
+		_, err = client.Insert("MinhaTarefa", BiometryArgs{
+			BiometryID: "asdasdas",
+			CustomerID: "sdfsdfds",
+		})
+		return err
+	}
+
 	return nil
 }

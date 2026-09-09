@@ -15,6 +15,14 @@ import (
 // of the application by applying various options.
 type Option func(*config)
 
+// WithNodeID sets the node ID for the configuration.
+// This is typically used to identify the node and its associated resources.
+func WithNodeID(id string) Option {
+	return func(cfg *config) {
+		cfg.nodeID = id
+	}
+}
+
 // WithWorker is an option function that sets the Workers field in the Config struct.
 // It takes a pointer to a Workers struct and returns an Option function that assigns
 // the provided Workers to the Config.

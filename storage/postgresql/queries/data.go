@@ -5,11 +5,10 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/isaqueveras/synk"
-
-	"github.com/oklog/ulid/v2"
 )
 
 // Queries represents a collection of methods to interact with the PostgreSQL database.
@@ -23,18 +22,21 @@ func New() *Queries {
 
 const getJobAvailableSQL = `
 WITH jobs AS (
-  SELECT id, args, kind, attempt, max_attempts
-  FROM synk.job
-  WHERE state in ('available', 'scheduled') 
-    AND queue = $1::TEXT 
-    AND scheduled_at <= COALESCE($4::TIMESTAMPTZ, NOW())
-    AND attempt < max_attempts
-  ORDER BY priority ASC, scheduled_at ASC, id ASC
+	SELECT j.id, j.args, j.kind, j.attempt, j.max_attempts
+  FROM job AS j
+  INNER JOIN queue AS q ON j.queue = q.name
+  WHERE j.state IN ('available', 'scheduled') 
+		AND j.queue = $1::TEXT 
+		AND j.scheduled_at <= COALESCE($4::TIMESTAMPTZ, NOW())
+		AND j.attempt < j.max_attempts
+		AND q.is_paused = false
+  ORDER BY j.priority ASC, j.scheduled_at ASC, j.id ASC
   LIMIT $2::INTEGER
-  FOR UPDATE SKIP LOCKED
+  FOR UPDATE OF j SKIP LOCKED
 ) 
-UPDATE synk.job SET
+UPDATE job SET
   state = 'running',
+	locked_by = $3::TEXT,
   attempt = job.attempt + 1,
   attempted_at = NOW(),
   attempted_by = array_append(job.attempted_by, $3::TEXT)
@@ -43,8 +45,8 @@ WHERE job.id = jobs.id
 RETURNING job.id, job.args, job.kind, job.attempt, job.max_attempts;`
 
 // GetJobAvailable retrieves available jobs from the database and updates their state to 'running'.
-func (q *Queries) GetJobAvailable(ctx context.Context, tx *sql.Tx, queue string, limit int32, clientID *ulid.ULID) ([]*synk.JobRow, error) {
-	rows, err := tx.QueryContext(ctx, getJobAvailableSQL, queue, limit, clientID.String(), nil)
+func (q *Queries) GetJobAvailable(ctx context.Context, tx *sql.Tx, queue string, limit int32, nodeID *string) ([]*synk.JobRow, error) {
+	rows, err := tx.QueryContext(ctx, getJobAvailableSQL, queue, limit, nodeID, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -67,13 +69,9 @@ func (q *Queries) GetJobAvailable(ctx context.Context, tx *sql.Tx, queue string,
 }
 
 const insertSQL = `
-INSERT INTO synk.job (
-	queue, kind, args, max_attempts, state, scheduled_at, 
-	priority, name, depends_on, remaining_dependencies
-) VALUES (
- 	$1, $2, $3::jsonb, $4, $5, $6, $7, $8, 
-	$9::bigint[], COALESCE(array_length($9::bigint[], 1), 0)
-) RETURNING id;`
+INSERT INTO job (queue, kind, args, max_attempts, state, scheduled_at, priority, name, depends_on, remaining_dependencies)
+VALUES ($1, $2, $3::jsonb, $4, $5, $6, $7, $8, $9::bigint[], COALESCE(array_length($9::bigint[], 1), 0))
+RETURNING id;`
 
 // Insert inserts a new job into the database with the specified queue, kind, and arguments.
 func (q *Queries) Insert(ctx context.Context, tx *sql.Tx, job *synk.JobRow) (id *int64, err error) {
@@ -83,8 +81,8 @@ func (q *Queries) Insert(ctx context.Context, tx *sql.Tx, job *synk.JobRow) (id 
 	return id, err
 }
 
-const updateJobStateSQLNoError = `UPDATE synk.job SET state = $1, finalized_at = $2 WHERE id = $3`
-const updateJobStateSQLWithError = `UPDATE synk.job SET state = $1, errors = array_append(errors, $2::jsonb) WHERE id = $3`
+const updateJobStateSQLNoError = `UPDATE job SET state = $1, finalized_at = $2 WHERE id = $3`
+const updateJobStateSQLWithError = `UPDATE job SET state = $1, errors = array_append(errors, $2::jsonb) WHERE id = $3`
 
 // UpdateJobState updates the state of a job identified by its ID in the database
 func (q *Queries) UpdateJobState(ctx context.Context, tx *sql.Tx, jobID *int64, newState synk.JobState, finalizedAt time.Time, e *synk.AttemptError) error {
@@ -157,10 +155,10 @@ func (q *Queries) Cleaner(ctx context.Context, tx *sql.Tx, clear *synk.CleanerCo
 
 const retrySQL = `
 WITH job_locked AS (
-	SELECT id FROM synk.job 
+	SELECT id FROM job
 	WHERE id = $1
 	FOR UPDATE SKIP LOCKED
-) UPDATE synk.job J SET 
+) UPDATE job J SET 
 	state = 'available', 
 	attempt = 0, 
 	attempted_at = NULL,
@@ -176,7 +174,7 @@ func (q *Queries) Retry(ctx context.Context, tx *sql.Tx, jobID *int64) error {
 	return err
 }
 
-const deleteSQL = `DELETE FROM synk.job WHERE id = $1;`
+const deleteSQL = `DELETE FROM job WHERE id = $1;`
 
 // Delete deletes a job by its ID and returns an error if the operation fails.
 func (q *Queries) Delete(ctx context.Context, tx *sql.Tx, jobID *int64) error {
@@ -186,11 +184,11 @@ func (q *Queries) Delete(ctx context.Context, tx *sql.Tx, jobID *int64) error {
 
 const cancelSQL = `
 WITH job_locked AS (
-	SELECT id FROM synk.job 
+	SELECT id FROM job 
 	WHERE id = $1
 	FOR UPDATE SKIP LOCKED
 )
-UPDATE synk.job J 
+UPDATE job J 
 SET state = 'cancelled', finalized_at = now()
 FROM job_locked JL
 WHERE J.id = JL.id AND J.state not in ('running', 'cancelled', 'completed');`
@@ -198,5 +196,21 @@ WHERE J.id = JL.id AND J.state not in ('running', 'cancelled', 'completed');`
 // Cancel cancels a job by its ID and returns an error if the operation fails.
 func (q *Queries) Cancel(ctx context.Context, tx *sql.Tx, jobID *int64) error {
 	_, err := tx.ExecContext(ctx, cancelSQL, jobID)
+	return err
+}
+
+const heartbeatSQL = `
+INSERT INTO node (id, hostname, pid, queues, started_at, last_heartbeat_at)
+VALUES ($1, $2, $3, $4, NOW(), NOW())
+ON CONFLICT (id) DO UPDATE SET last_heartbeat_at = NOW(), queues = EXCLUDED.queues;`
+
+// Heartbeat updates the heartbeat timestamp for a node in the database,
+// indicating that it is still active and processing jobs.
+func (q *Queries) Heartbeat(ctx context.Context, tx *sql.Tx, nodeID string, queues synk.StringArray) error {
+	hostname, err := os.Hostname()
+	if err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, heartbeatSQL, nodeID, hostname, os.Getpid(), queues)
 	return err
 }

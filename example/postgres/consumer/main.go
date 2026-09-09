@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"log/slog"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/isaqueveras/synk"
@@ -33,6 +34,9 @@ func main() {
 	logg := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
 	var opts = []synk.Option{
+		// Sets the node ID for the configuration.
+		synk.WithNodeID("c_01M21PKB9Z3B9AEQKVSAA8GYNR"),
+
 		// Sets the configuration for the queues to be used.
 		synk.WithQueue("default", synk.QueueConfigDefault),
 		synk.WithQueue("ownership", &synk.QueueConfig{
@@ -54,6 +58,7 @@ func main() {
 		// Sets the job cleaner configuration.
 		synk.WithCleaner(&synk.CleanerConfig{
 			CleanInterval: time.Hour * 6, // every 6 hours
+			BatchSize:     100,           // 100 jobs per batch
 			ByStatus: map[synk.JobState]time.Duration{
 				synk.JobStateCompleted: time.Hour * 24 * 15, // 15 days
 				synk.JobStateCancelled: time.Hour * 24 * 60, // 60 days
@@ -65,7 +70,9 @@ func main() {
 	defer cancel()
 
 	client := synk.NewClient(ctx, opts...)
-	defer client.Shutdown()
 
-	client.Start()
+	var wg sync.WaitGroup
+	wg.Go(client.Cleaner)
+	wg.Go(client.Start)
+	wg.Wait()
 }
