@@ -1,6 +1,7 @@
 package synk
 
 import (
+	"database/sql"
 	"database/sql/driver"
 	"fmt"
 	"strings"
@@ -63,8 +64,12 @@ const (
 	PriorityLow Priority = 4
 )
 
-// InsertOptions represents options for inserting a job into the queue.
-type InsertOptions struct {
+// EnqueueOptions represents options for enqueueing a job into the queue.
+type EnqueueOptions struct {
+	// Transaction is an optional database transaction that can be used to insert the job into the queue.
+	// If provided, the job will be inserted within the context of this transaction.
+	Transaction *sql.Tx
+
 	// ScheduledAt is the time at which the job should be scheduled to run.
 	// If not specified, the current time is used.
 	ScheduledAt time.Time
