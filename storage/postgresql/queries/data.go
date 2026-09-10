@@ -202,7 +202,8 @@ func (q *Queries) Cancel(ctx context.Context, tx *sql.Tx, jobID *synk.JobID) err
 const heartbeatSQL = `
 INSERT INTO node (id, hostname, pid, queues, started_at, last_heartbeat_at)
 VALUES ($1, $2, $3, $4, NOW(), NOW())
-ON CONFLICT (id) DO UPDATE SET last_heartbeat_at = NOW(), queues = EXCLUDED.queues;`
+ON CONFLICT (id) DO UPDATE SET last_heartbeat_at = NOW(), 
+	queues = EXCLUDED.queues, pid = EXCLUDED.pid, hostname = EXCLUDED.hostname;`
 
 // Heartbeat updates the heartbeat timestamp for a node in the database,
 // indicating that it is still active and processing jobs.

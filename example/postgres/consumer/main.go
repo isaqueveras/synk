@@ -35,7 +35,7 @@ func main() {
 
 	var opts = []synk.Option{
 		// Sets the node ID for the configuration.
-		synk.WithNodeID("c_01M21PKB9Z3B9AEQKVSAA8GYNR"),
+		synk.WithNodeID("c_01M249QK9NCW6XCW02M73MPAP9"),
 
 		// Sets the configuration for the queues to be used.
 		synk.WithQueue("default", synk.QueueConfigDefault),
