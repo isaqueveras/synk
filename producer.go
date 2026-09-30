@@ -13,38 +13,54 @@ import (
 type producer struct {
 	nodeID        *NodeID
 	logger        *slog.Logger
-	jobsChannel   chan *JobRow
 	config        *producerConfig
 	storage       Storage
 	workers       map[string]*workerInfo
 	jobTimeout    time.Duration
 	numJobsActive atomic.Int32
-	done          func(*JobRow)
 }
 
 type producerConfig struct {
-	maxWorkerCount uint16
+	maxWorkerCount uint64
 	workers        map[string]*workerInfo
 	queueName      string
 	jobTimeout     time.Duration
 	timeFetch      time.Duration
 }
 
-func (p *producer) process(ctx context.Context, jobs chan []*JobRow) {
-	limit := int32(p.config.maxWorkerCount) - p.numJobsActive.Load()
-	go p.getJobAvailable(jobs, limit, p.nodeID)
-
-	for {
-		select {
-		case jobs, ok := <-jobs:
-			if !ok || len(jobs) == 0 {
-				return
-			}
-			p.start(ctx, jobs)
-		case <-p.jobsChannel:
-			p.numJobsActive.Add(-1)
-		}
+func (p *producer) process(ctx context.Context) {
+	if err := ctx.Err(); err != nil {
+		return
 	}
+
+	limit := int32(p.config.maxWorkerCount) - p.numJobsActive.Load()
+	if limit <= 0 {
+		return
+	}
+
+	jobs, err := p.storage.GetJobAvailable(p.nodeID, p.config.queueName, limit)
+	if err != nil {
+		if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+			p.logger.ErrorContext(ctx, "failed to get available jobs",
+				slog.String("error", err.Error()),
+				slog.String("queue", p.config.queueName),
+				slog.String("node_id", p.nodeID.String()),
+			)
+		}
+		return
+	}
+
+	if len(jobs) == 0 {
+		return
+	}
+
+	p.logger.Debug("Fetched available jobs",
+		slog.Int("count", len(jobs)),
+		slog.String("queue", p.config.queueName),
+		slog.String("node_id", p.nodeID.String()),
+	)
+
+	p.start(ctx, jobs)
 }
 
 func (p *producer) heartbeat(ctx context.Context, queues StringArray) {
@@ -63,7 +79,9 @@ func (p *producer) heartbeat(ctx context.Context, queues StringArray) {
 					slog.String("queue", p.config.queueName),
 					slog.String("node_id", p.nodeID.String()))
 			}
-			p.logger.InfoContext(ctx, "Heartbeat: total completed jobs", slog.Int64("active_jobs", int64(p.numJobsActive.Load())))
+			p.logger.InfoContext(ctx, "Heartbeat: total completed jobs",
+				slog.Int64("active_jobs", int64(p.numJobsActive.Load())),
+			)
 		}
 	}
 }
@@ -83,18 +101,16 @@ func (p *producer) start(ctx context.Context, jobs []*JobRow) {
 
 		jobCtx, jobCancel := context.WithCancelCause(ctx)
 
-		p.done = p.handleWorkerDone
-		p.numJobsActive.Add(1)
-
 		go p.startWork(jobCtx, jobCancel, job, work)
 	}
 }
 
 func (p *producer) startWork(ctx context.Context, cancel context.CancelCauseFunc, job *JobRow, work work) {
-	defer cancel(errors.New("context cancelled as executor finished"))
+	p.numJobsActive.Add(1)
+	defer p.numJobsActive.Add(-1)
 
 	defer func() {
-		p.numJobsActive.Add(-1)
+		cancel(errors.New("context cancelled as executor finished"))
 		if r := recover(); r != nil {
 			p.logger.ErrorContext(ctx, "worker panic",
 				slog.Any("panic", r),
@@ -105,9 +121,7 @@ func (p *producer) startWork(ctx context.Context, cancel context.CancelCauseFunc
 	}()
 
 	if err := work.unmarshal(); err != nil {
-		p.logger.ErrorContext(ctx, "Failed to unmarshal job args",
-			slog.Int64("job_id", int64(job.ID)), slog.String("error", err.Error()))
-		return
+		panic(fmt.Sprintf("failed to unmarshal job args: %v", err))
 	}
 
 	var (
@@ -159,28 +173,4 @@ func (p *producer) startWork(ctx context.Context, cancel context.CancelCauseFunc
 		slog.String("args", string(job.Args)),
 	)
 
-	select {
-	case <-ctx.Done():
-		p.logger.DebugContext(ctx, "Context done: "+ctx.Err().Error())
-		return
-	default:
-	}
-
-	p.handleWorkerDone(job)
-}
-
-func (p *producer) handleWorkerDone(job *JobRow) {
-	p.jobsChannel <- job
-}
-
-func (p *producer) getJobAvailable(jobs chan<- []*JobRow, limit int32, nodeID *NodeID) {
-	items, err := p.storage.GetJobAvailable(nodeID, p.config.queueName, limit)
-	if err != nil {
-		p.logger.Error("Failed to get available jobs",
-			slog.String("error", err.Error()),
-			slog.String("queue", p.config.queueName),
-			slog.String("node_id", nodeID.String()))
-		return
-	}
-	jobs <- items
 }

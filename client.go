@@ -43,8 +43,8 @@ type config struct {
 // It sets the maximum number of workers to 100, the time interval to fetch jobs to 200 milliseconds,
 // and the timeout for each job to 1 minute.
 var QueueConfigDefault = &QueueConfig{
-	MaxWorkers: 100,
-	TimeFetch:  time.Millisecond * 200,
+	MaxWorkers: 50,
+	TimeFetch:  time.Second,
 	JobTimeout: time.Minute,
 }
 
@@ -52,7 +52,7 @@ var QueueConfigDefault = &QueueConfig{
 // It includes the maximum number of workers, the time interval for fetching jobs,
 // and the timeout duration for each job.
 type QueueConfig struct {
-	MaxWorkers uint16
+	MaxWorkers uint64
 	TimeFetch  time.Duration
 
 	workCtx    context.Context
@@ -89,7 +89,7 @@ func NewClient(ctx context.Context, opts ...Option) *client {
 		clt.nodeID = NodeID(hostname + "_" + time.Now().Format(time.RFC3339))
 	}
 
-	clt.cfg.logger = clt.cfg.logger.WithGroup("node").With(slog.String("id", clt.nodeID.String()))
+	clt.cfg.logger = clt.cfg.logger.With(slog.String("node_id", clt.nodeID.String()))
 	if clt.cfg.storage == nil {
 		clt.cfg.logger.Error("no storage configured")
 		return clt
@@ -109,12 +109,11 @@ func NewClient(ctx context.Context, opts ...Option) *client {
 	for queue, config := range clt.cfg.queues {
 		logger := clt.cfg.logger.WithGroup("producer").With(slog.String("queue", queue))
 		clt.producers[queue] = &producer{
-			nodeID:      &clt.nodeID,
-			logger:      logger,
-			workers:     clt.cfg.workers,
-			storage:     clt.cfg.storage,
-			jobTimeout:  config.JobTimeout,
-			jobsChannel: make(chan *JobRow, config.MaxWorkers),
+			nodeID:     &clt.nodeID,
+			logger:     logger,
+			workers:    clt.cfg.workers,
+			storage:    clt.cfg.storage,
+			jobTimeout: config.JobTimeout,
 			config: &producerConfig{
 				maxWorkerCount: config.MaxWorkers,
 				timeFetch:      config.TimeFetch,
@@ -169,11 +168,11 @@ func (c *client) Enqueue(ctx context.Context, name string, args JobArgs, options
 	return *jobID, nil
 }
 
-// Run it initializes the client's context and starts the producers for each queue.
+// InitProducers it initializes the client's context and starts the producers for each queue.
 // Each producer runs in a separate goroutine, fetching and processing jobs according to its configuration.
 // The method waits for all producers to complete their work before returning.
 // It also sets up a heartbeat mechanism to log the total number of completed jobs at regular intervals.
-func (c *client) Run() {
+func (c *client) InitProducers() {
 	c.wg.Add(len(c.producers))
 	for _, producer := range c.producers {
 		pdc := producer
@@ -181,24 +180,18 @@ func (c *client) Run() {
 		go func() {
 			defer c.wg.Done()
 
+			ticker := time.NewTicker(pdc.config.timeFetch)
+			defer ticker.Stop()
+
 			go pdc.heartbeat(c.ctx, c.cfg.queues.Names())
 
-			jobs := make(chan []*JobRow)
 			for {
 				select {
 				case <-c.ctx.Done():
-					pdc.logger.DebugContext(c.ctx, "Producer context done: "+c.ctx.Err().Error())
+					pdc.logger.DebugContext(c.ctx, "producer context done: "+c.ctx.Err().Error())
 					return
-				case <-time.NewTicker(pdc.config.timeFetch).C:
-					pdc.process(c.workCtx, jobs)
-					select {
-					case <-c.ctx.Done():
-						pdc.logger.DebugContext(c.ctx, "Producer context done: "+c.ctx.Err().Error())
-						return
-					default:
-					}
-				case <-pdc.jobsChannel:
-					pdc.numJobsActive.Add(-1)
+				case <-ticker.C:
+					pdc.process(c.workCtx)
 				}
 			}
 		}()
@@ -213,8 +206,8 @@ func (c *client) Run() {
 	c.wg.Wait()
 }
 
-// RunCleaner runs the cleaner function with the provided context and cleaner configuration.
-func (c *client) RunCleaner() {
+// InitCleaner runs the cleaner function with the provided context and cleaner configuration.
+func (c *client) InitCleaner() {
 	if c.cfg.cleaner.CleanInterval == 0 {
 		c.cfg.logger.Error("cleaner interval is required")
 		return

@@ -72,7 +72,7 @@ func main() {
 	client := synk.NewClient(ctx, opts...)
 
 	var wg sync.WaitGroup
-	wg.Go(client.Run)
-	wg.Go(client.RunCleaner)
+	wg.Go(client.InitProducers)
+	wg.Go(client.InitCleaner)
 	wg.Wait()
 }

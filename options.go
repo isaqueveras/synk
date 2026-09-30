@@ -115,12 +115,12 @@ func getOptionsOrDefault(options ...*EnqueueOptions) (JobState, *EnqueueOptions,
 		opts = options[0]
 	}
 
-	if (opts.Priority > PriorityLow) || (opts.Priority < PriorityCritical) {
-		return JobStateCancelled, nil, errors.New("priority must be between 1 and 4")
-	}
-
 	if opts.Priority == 0 {
 		opts.Priority = PriorityMedium
+	}
+
+	if (opts.Priority > PriorityLow) || (opts.Priority < PriorityCritical) {
+		return JobStateCancelled, nil, errors.New("priority must be between 1 and 4")
 	}
 
 	state := JobStateAvailable
