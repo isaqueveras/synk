@@ -107,7 +107,7 @@ func NewClient(ctx context.Context, opts ...Option) *client {
 	}
 
 	for queue, config := range clt.cfg.queues {
-		logger := clt.cfg.logger.WithGroup("producer").With(slog.String("queue", queue))
+		logger := clt.cfg.logger.With(slog.String("queue", queue))
 		clt.producers[queue] = &producer{
 			nodeID:     &clt.nodeID,
 			logger:     logger,
@@ -115,7 +115,7 @@ func NewClient(ctx context.Context, opts ...Option) *client {
 			storage:    clt.cfg.storage,
 			jobTimeout: config.JobTimeout,
 			config: &producerConfig{
-				maxWorkerCount: config.MaxWorkers,
+				maxWorkerCount: uint64(config.MaxWorkers),
 				timeFetch:      config.TimeFetch,
 				queueName:      queue,
 				workers:        clt.cfg.workers,
@@ -168,11 +168,11 @@ func (c *client) Enqueue(ctx context.Context, name string, args JobArgs, options
 	return *jobID, nil
 }
 
-// InitProducers it initializes the client's context and starts the producers for each queue.
+// InitializeProducers it initializes the client's context and starts the producers for each queue.
 // Each producer runs in a separate goroutine, fetching and processing jobs according to its configuration.
 // The method waits for all producers to complete their work before returning.
 // It also sets up a heartbeat mechanism to log the total number of completed jobs at regular intervals.
-func (c *client) InitProducers() {
+func (c *client) InitializeProducers() {
 	c.wg.Add(len(c.producers))
 	for _, producer := range c.producers {
 		pdc := producer
@@ -206,8 +206,8 @@ func (c *client) InitProducers() {
 	c.wg.Wait()
 }
 
-// InitCleaner runs the cleaner function with the provided context and cleaner configuration.
-func (c *client) InitCleaner() {
+// InitializeCleaner runs the cleaner function with the provided context and cleaner configuration.
+func (c *client) InitializeCleaner() {
 	if c.cfg.cleaner.CleanInterval == 0 {
 		c.cfg.logger.Error("cleaner interval is required")
 		return

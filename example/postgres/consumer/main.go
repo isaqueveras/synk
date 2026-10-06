@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"database/sql"
-	"log/slog"
 	"os"
 	"sync"
 	"time"
@@ -30,26 +29,28 @@ func main() {
 	db.SetMaxIdleConns(10)
 	db.SetConnMaxLifetime(time.Hour)
 
-	// Create a logger instance.
-	logg := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
-
 	var opts = []synk.Option{
 		// Sets the node ID for the configuration.
-		synk.WithNodeID("c_01M249QK9NCW6XCW02M73MPAP9"),
+		synk.WithNodeID("c_01M47M722ATBKSD26Y0AAQCZZH"),
 
 		// Sets the configuration for the queues to be used.
-		synk.WithQueue("default", synk.QueueConfigDefault),
-		synk.WithQueue("ownership", &synk.QueueConfig{
-			MaxWorkers: 10,
+		synk.WithQueue("default", &synk.QueueConfig{
+			MaxWorkers: 100,
 			TimeFetch:  time.Second,
-			JobTimeout: time.Minute * 10,
+			JobTimeout: time.Second * 30,
+		}),
+
+		synk.WithQueue("ownership", &synk.QueueConfig{
+			MaxWorkers: 100,
+			TimeFetch:  time.Second,
+			JobTimeout: time.Minute * 30,
 		}),
 
 		// Set storage configuration using PostgreSQL.
 		synk.WithStorage(postgresql.New(db)),
 
 		// Sets the logger to be used.
-		synk.WithLogger(logg),
+		// synk.WithLogger(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))),
 
 		// Sets the workers to be used.
 		synk.WithWorker(worker.NewContract()),
@@ -72,7 +73,7 @@ func main() {
 	client := synk.NewClient(ctx, opts...)
 
 	var wg sync.WaitGroup
-	wg.Go(client.InitProducers)
-	wg.Go(client.InitCleaner)
+	wg.Go(client.InitializeProducers)
+	wg.Go(client.InitializeCleaner)
 	wg.Wait()
 }
