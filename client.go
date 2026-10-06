@@ -62,7 +62,7 @@ func NewClient(ctx context.Context, opts ...Option) *client {
 		cfg: &config{
 			queues:  make(map[string]*QueueConfig),
 			workers: make(map[string]*workerInfo),
-			logger:  slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelWarn})),
+			logger:  slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})),
 		},
 	}
 
