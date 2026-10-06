@@ -205,13 +205,55 @@ VALUES ($1, $2, $3, $4, NOW(), NOW())
 ON CONFLICT (id) DO UPDATE SET last_heartbeat_at = NOW(), 
 	queues = EXCLUDED.queues, pid = EXCLUDED.pid, hostname = EXCLUDED.hostname;`
 
-// Heartbeat updates the heartbeat timestamp for a node in the database,
+const upsertStatsSQL = `
+INSERT INTO synk_heartbeat (
+	node_id, queue_name, active_jobs, jobs_fetched, jobs_started,
+	jobs_completed, jobs_failed, jobs_cancelled, heartbeats_sent,
+	heartbeat_errors, last_heartbeat, last_job_started, last_job_completed
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) 
+ON CONFLICT (node_id, queue_name) DO UPDATE SET
+	active_jobs = EXCLUDED.active_jobs,
+	jobs_fetched = EXCLUDED.jobs_fetched,
+	jobs_started = EXCLUDED.jobs_started,
+	jobs_completed = EXCLUDED.jobs_completed,
+	jobs_failed = EXCLUDED.jobs_failed,
+	jobs_cancelled = EXCLUDED.jobs_cancelled,
+	heartbeats_sent = EXCLUDED.heartbeats_sent,
+	heartbeat_errors = EXCLUDED.heartbeat_errors,
+	last_heartbeat = EXCLUDED.last_heartbeat,
+	last_job_started = EXCLUDED.last_job_started,
+	last_job_completed = EXCLUDED.last_job_completed;
+`
+
+const insertHistorySQL = `
+INSERT INTO synk_heartbeat_history (
+	node_id, queue_name, active_jobs, jobs_fetched, jobs_started, 
+	jobs_completed, jobs_failed, jobs_cancelled
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8);
+`
+
+// UpdateHeartbeat updates the heartbeat timestamp for a node in the database,
 // indicating that it is still active and processing jobs.
-func (q *Queries) Heartbeat(ctx context.Context, tx *sql.Tx, nodeID *synk.NodeID, queues synk.StringArray) error {
+func (q *Queries) UpdateHeartbeat(ctx context.Context, db *sql.DB, nodeID *synk.NodeID, queues synk.StringArray, queueName string, metrics *synk.Metrics) error {
 	hostname, err := os.Hostname()
 	if err != nil {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, heartbeatSQL, nodeID.String(), hostname, os.Getpid(), queues)
-	return err
+
+	if _, err = db.ExecContext(ctx, heartbeatNodeSQL, nodeID.String(), hostname, os.Getpid(), queues); err != nil {
+		return fmt.Errorf("failed to update heartbeat: %w", err)
+	}
+
+	if _, err = db.ExecContext(ctx, upsertStatsSQL, nodeID.String(), queueName, metrics.ActiveJobs, metrics.JobsFetched,
+		metrics.JobsStarted, metrics.JobsCompleted, metrics.JobsFailed, metrics.JobsCancelled, metrics.HeartbeatsSent,
+		metrics.HeartbeatErrors, metrics.LastHeartbeat, metrics.LastJobStarted, metrics.LastJobCompleted); err != nil {
+		return fmt.Errorf("failed to upsert stats: %w", err)
+	}
+
+	if _, err = db.ExecContext(ctx, insertHistorySQL, nodeID.String(), queueName, metrics.ActiveJobs, metrics.JobsFetched,
+		metrics.JobsStarted, metrics.JobsCompleted, metrics.JobsFailed, metrics.JobsCancelled); err != nil {
+		return fmt.Errorf("failed to insert stats history: %w", err)
+	}
+
+	return nil
 }

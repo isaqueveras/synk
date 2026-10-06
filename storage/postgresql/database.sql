@@ -67,3 +67,44 @@ CREATE INDEX IF NOT EXISTS synk_job_state_and_finalized_at_index ON synk_jobs US
 CREATE INDEX IF NOT EXISTS synk_job_prioritized_fetching_index ON synk_jobs USING btree(state, queue, priority, scheduled_at, id);
 CREATE INDEX IF NOT EXISTS synk_job_args_index ON synk_jobs USING GIN(args);
 CREATE INDEX IF NOT EXISTS synk_job_find_children_idx ON synk_jobs USING GIN(depends_on) WHERE array_length(depends_on, 1) > 0 AND state = 'pending';
+
+CREATE TABLE IF NOT EXISTS synk_heartbeat (
+  node_id VARCHAR NOT NULL REFERENCES synk_nodes(id) ON DELETE CASCADE,
+  queue_name VARCHAR NOT NULL REFERENCES synk_queues(name) ON DELETE CASCADE,
+
+  active_jobs INT DEFAULT 0,
+  jobs_fetched INT DEFAULT 0,
+  jobs_started INT DEFAULT 0,
+  jobs_completed INT DEFAULT 0,
+  jobs_failed INT DEFAULT 0,
+  jobs_cancelled INT DEFAULT 0,
+
+  heartbeats_sent INT DEFAULT 0,
+  heartbeat_errors INT DEFAULT 0,
+  last_heartbeat TIMESTAMPTZ,
+
+  last_job_started TIMESTAMPTZ,
+  last_job_completed TIMESTAMPTZ,
+
+  PRIMARY KEY (node_id, queue_name)
+);
+
+CREATE INDEX IF NOT EXISTS synk_idx_synk_heartbeat_queue ON synk_heartbeat(queue_name);
+
+CREATE TABLE IF NOT EXISTS synk_heartbeat_history (
+  id BIGSERIAL PRIMARY KEY,
+  node_id VARCHAR(100) NOT NULL, 
+  queue_name VARCHAR(50) NOT NULL REFERENCES synk_queues(name) ON DELETE CASCADE,
+  recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+  active_jobs INT NOT NULL DEFAULT 0,
+  jobs_fetched INT NOT NULL DEFAULT 0,
+  jobs_started INT NOT NULL DEFAULT 0,
+  jobs_completed INT NOT NULL DEFAULT 0,
+  jobs_failed INT NOT NULL DEFAULT 0,
+  jobs_cancelled INT NOT NULL DEFAULT 0,
+
+  FOREIGN KEY (node_id, queue_name) REFERENCES synk_heartbeat(node_id, queue_name) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS synk_idx_synk_heartbeat_history_time ON synk_heartbeat_history(recorded_at);

@@ -6,18 +6,18 @@ import (
 	"fmt"
 	"log/slog"
 	"runtime/debug"
-	"sync/atomic"
 	"time"
 )
 
 type producer struct {
-	nodeID        *NodeID
-	logger        *slog.Logger
-	config        *producerConfig
-	storage       Storage
-	workers       map[string]*workerInfo
-	jobTimeout    time.Duration
-	numJobsActive atomic.Int32
+	nodeID     *NodeID
+	logger     *slog.Logger
+	config     *producerConfig
+	storage    Storage
+	workers    map[string]*workerInfo
+	jobTimeout time.Duration
+
+	metrics metricsState
 }
 
 type producerConfig struct {
@@ -33,7 +33,7 @@ func (p *producer) process(ctx context.Context) {
 		return
 	}
 
-	limit := int32(p.config.maxWorkerCount) - p.numJobsActive.Load()
+	limit := int64(p.config.maxWorkerCount) - p.metrics.activeJobs.Load()
 	if limit <= 0 {
 		return
 	}
@@ -41,52 +41,13 @@ func (p *producer) process(ctx context.Context) {
 	jobs, err := p.storage.GetJobAvailable(p.nodeID, p.config.queueName, limit)
 	if err != nil {
 		if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
-			p.logger.ErrorContext(ctx, "failed to get available jobs",
-				slog.String("error", err.Error()),
-				slog.String("queue", p.config.queueName),
-				slog.String("node_id", p.nodeID.String()),
-			)
+			p.logger.ErrorContext(ctx, "failed to get available jobs", slog.String("error", err.Error()),
+				slog.String("queue", p.config.queueName), slog.String("node_id", p.nodeID.String()))
 		}
 		return
 	}
 
-	if len(jobs) == 0 {
-		return
-	}
-
-	p.logger.Debug("Fetched available jobs",
-		slog.Int("count", len(jobs)),
-		slog.String("queue", p.config.queueName),
-		slog.String("node_id", p.nodeID.String()),
-	)
-
-	p.start(ctx, jobs)
-}
-
-func (p *producer) heartbeat(ctx context.Context, queues StringArray) {
-	ticker := time.NewTicker(time.Second * 5)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			p.logger.ErrorContext(ctx, "Heartbeat context done: "+ctx.Err().Error())
-			return
-		case <-ticker.C:
-			if err := p.storage.Heartbeat(p.nodeID, queues); err != nil {
-				p.logger.ErrorContext(ctx, "Failed to update heartbeat",
-					slog.String("error", err.Error()),
-					slog.String("queue", p.config.queueName),
-					slog.String("node_id", p.nodeID.String()))
-			}
-			p.logger.InfoContext(ctx, "Heartbeat: total completed jobs",
-				slog.Int64("active_jobs", int64(p.numJobsActive.Load())),
-			)
-		}
-	}
-}
-
-func (p *producer) start(ctx context.Context, jobs []*JobRow) {
+	p.metrics.jobsFetched.Add(int64(len(jobs)))
 	for _, job := range jobs {
 		var work work
 		if info, ok := p.workers[job.Kind]; ok {
@@ -101,22 +62,49 @@ func (p *producer) start(ctx context.Context, jobs []*JobRow) {
 
 		jobCtx, jobCancel := context.WithCancelCause(ctx)
 
-		go p.startWork(jobCtx, jobCancel, job, work)
+		go p.executor(jobCtx, jobCancel, job, work)
 	}
 }
 
-func (p *producer) startWork(ctx context.Context, cancel context.CancelCauseFunc, job *JobRow, work work) {
-	p.numJobsActive.Add(1)
-	defer p.numJobsActive.Add(-1)
+func (p *producer) heartbeat(ctx context.Context, queues StringArray) {
+	ticker := time.NewTicker(time.Second * 5)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := p.storage.UpdateHeartbeat(p.nodeID, queues, p.config.queueName, p.metrics.snapshot()); err != nil {
+				p.metrics.heartbeatErrors.Add(1)
+				if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+					p.logger.ErrorContext(ctx, "Failed to update heartbeat", slog.String("error", err.Error()))
+				}
+				return
+			}
+
+			p.metrics.heartbeatsSent.Add(1)
+			p.metrics.lastHeartbeat.Store(time.Now().UnixNano())
+
+			p.logger.InfoContext(ctx, "heartbeat", slog.Any("metrics", p.metrics.snapshot()))
+		}
+	}
+}
+
+func (p *producer) executor(ctx context.Context, cancel context.CancelCauseFunc, job *JobRow, work work) {
+	p.metrics.addActiveJob(job.ID)
+	p.metrics.jobsStarted.Add(1)
+	p.metrics.lastJobStarted.Store(time.Now().UnixNano())
 
 	defer func() {
+		p.metrics.removeActiveJob(job.ID)
+		p.metrics.lastJobCompleted.Store(time.Now().UnixNano())
+
 		cancel(errors.New("context cancelled as executor finished"))
+
 		if r := recover(); r != nil {
-			p.logger.ErrorContext(ctx, "worker panic",
-				slog.Any("panic", r),
-				slog.Int64("job_id", int64(job.ID)),
-				slog.String("stack", string(debug.Stack())),
-			)
+			p.logger.ErrorContext(ctx, "Executor panic", slog.Any("panic", r), slog.Int64("job_id", int64(job.ID)),
+				slog.String("stack", string(debug.Stack())))
 		}
 	}()
 
@@ -141,6 +129,7 @@ func (p *producer) startWork(ctx context.Context, cancel context.CancelCauseFunc
 	}
 
 	if err := work.work(ctx); err != nil {
+		p.metrics.jobsFailed.Add(1)
 		msg := err.Error()
 		attempt = &AttemptError{
 			NodeID:  p.nodeID.String(),
@@ -152,25 +141,25 @@ func (p *producer) startWork(ctx context.Context, cancel context.CancelCauseFunc
 
 		state = JobStateAvailable
 		if job.Attempt >= job.Options.MaxRetries {
+
+			p.metrics.jobsCancelled.Add(1)
 			state = JobStateCancelled
 		}
 
-		p.logger.DebugContext(ctx, "Job failed",
-			slog.Int64("job_id", int64(job.ID)),
-			slog.String("kind", job.Kind),
-			slog.String("args", string(job.Args)),
-			slog.String("error", msg),
-		)
+		if p.storage.UpdateJobState(&job.ID, state, time.Now(), attempt) != nil {
+			return
+		}
+
+		p.logger.DebugContext(ctx, "Job failed", slog.Int64("job_id", int64(job.ID)), slog.String("kind", job.Kind),
+			slog.String("args", string(job.Args)), slog.String("error", msg))
+		return
 	}
 
-	if err := p.storage.UpdateJobState(&job.ID, state, time.Now(), attempt); err != nil {
-		p.logger.DebugContext(ctx, fmt.Sprintf("Failed to update job %d: %v", job.ID, err))
+	p.metrics.jobsCompleted.Add(1)
+	if err := p.storage.UpdateJobState(&job.ID, state, time.Now(), nil); err != nil {
+		return
 	}
 
-	p.logger.DebugContext(ctx, "Job completed",
-		slog.Int64("job_id", int64(job.ID)),
-		slog.String("kind", job.Kind),
-		slog.String("args", string(job.Args)),
-	)
-
+	p.logger.DebugContext(ctx, "Job completed", slog.Int64("job_id", int64(job.ID)), slog.String("kind", job.Kind),
+		slog.String("args", string(job.Args)))
 }

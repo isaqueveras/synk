@@ -119,12 +119,10 @@ func (pg *postgres) Delete(jobID *synk.JobID) error {
 	})
 }
 
-// Heartbeat updates the heartbeat timestamp for a node in the database,
+// UpdateHeartbeat updates the heartbeat timestamp for a node in the database,
 // indicating that it is still active and processing jobs.
-func (pg *postgres) Heartbeat(nodeID *synk.NodeID, queues []string) error {
-	return pg.withTx(func(ctx context.Context, tx *sql.Tx) error {
-		return pg.queries.Heartbeat(ctx, tx, nodeID, queues)
-	})
+func (pg *postgres) UpdateHeartbeat(nodeID *synk.NodeID, queues []string, queueName string, metrics *synk.Metrics) error {
+	return pg.queries.UpdateHeartbeat(pg.ctx, pg.db, nodeID, queues, queueName, metrics)
 }
 
 func (pg *postgres) withTx(fn func(context.Context, *sql.Tx) error) error {
