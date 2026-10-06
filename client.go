@@ -39,15 +39,6 @@ type config struct {
 	logger  *slog.Logger
 }
 
-// QueueConfigDefault is the default configuration for the queue system.
-// It sets the maximum number of workers to 100, the time interval to fetch jobs to 200 milliseconds,
-// and the timeout for each job to 1 minute.
-var QueueConfigDefault = &QueueConfig{
-	MaxWorkers: 50,
-	TimeFetch:  time.Second,
-	JobTimeout: time.Minute,
-}
-
 // QueueConfig holds the configuration settings for a job queue.
 // It includes the maximum number of workers, the time interval for fetching jobs,
 // and the timeout duration for each job.
