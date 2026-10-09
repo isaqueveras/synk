@@ -31,12 +31,13 @@ type client struct {
 }
 
 type config struct {
-	nodeID  NodeID
-	queues  Queues
-	workers map[string]*workerInfo
-	cleaner *CleanerConfig
-	storage Storage
-	logger  *slog.Logger
+	nodeID    NodeID
+	queues    Queues
+	storage   Storage
+	workers   map[string]*workerInfo
+	logger    *slog.Logger
+	cleaner   *CleanerConfig
+	heartbeat *HeartbeatConfig
 }
 
 // QueueConfig holds the configuration settings for a job queue.
@@ -174,7 +175,11 @@ func (c *client) InitializeProducers() {
 			ticker := time.NewTicker(pdc.config.timeFetch)
 			defer ticker.Stop()
 
-			go pdc.heartbeat(c.ctx, c.cfg.queues.Names())
+			// If heartbeat configuration is provided, start the heartbeat
+			// goroutine to periodically send heartbeats to the storage.
+			if c.cfg.heartbeat != nil && c.cfg.heartbeat.Interval > 0 {
+				go pdc.heartbeat(c.ctx, c.cfg.heartbeat.Interval, c.cfg.queues.Names())
+			}
 
 			for {
 				select {
@@ -188,7 +193,7 @@ func (c *client) InitializeProducers() {
 		}()
 	}
 
-	c.cfg.logger.InfoContext(c.ctx, "Client started",
+	c.cfg.logger.InfoContext(c.ctx, "Node initialized and producers started",
 		slog.Int("num_producers", len(c.producers)),
 		slog.Int("num_queues", len(c.cfg.queues)),
 		slog.Int("num_workers", len(c.cfg.workers)),

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"log/slog"
 	"os"
 	"sync"
 	"time"
@@ -18,7 +19,8 @@ import (
 func main() {
 	stdlib.RegisterConnConfig(&pgx.ConnConfig{})
 
-	// Open a connection to the PostgreSQL database using the connection string from the environment variable.
+	// Open a connection to the PostgreSQL database using the connection
+	// string from the environment variable.
 	db, err := sql.Open("pgx", os.Getenv("SYNK_DATABASE_POSTGRES"))
 	if err != nil {
 		panic(err)
@@ -50,11 +52,17 @@ func main() {
 		synk.WithStorage(postgresql.New(db)),
 
 		// Sets the logger to be used.
-		// synk.WithLogger(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))),
+		synk.WithLogger(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))),
 
 		// Sets the workers to be used.
 		synk.WithWorker(worker.NewContract()),
 		synk.WithWorker(worker.NewBiometry()),
+
+		// Sets the healthbeat configuration for the client,
+		// which will periodically check the health of the system.
+		synk.WithHeartbeat(&synk.HeartbeatConfig{
+			Interval: time.Second * 5,
+		}),
 
 		// Sets the job cleaner configuration.
 		synk.WithCleaner(&synk.CleanerConfig{

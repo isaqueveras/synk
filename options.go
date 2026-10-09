@@ -125,6 +125,22 @@ func WithLogger(logger *slog.Logger) Option {
 	}
 }
 
+// WithHeartbeat sets the heartbeat configuration for the synk client.
+type HeartbeatConfig struct {
+	// Interval is the time interval at which the heartbeat will be sent to the storage.
+	// It is used to indicate that the node is alive and functioning properly.
+	Interval time.Duration
+}
+
+// WithHeartbeat sets the heartbeat configuration for the synk client.
+// It takes a HeartbeatConfig struct as an argument and returns an Option function
+// that updates the Config with the provided heartbeat configuration.
+func WithHeartbeat(hbc *HeartbeatConfig) Option {
+	return func(c *config) {
+		c.heartbeat = hbc
+	}
+}
+
 func getOptionsOrDefault(options ...*EnqueueOptions) (JobState, *EnqueueOptions, error) {
 	opts := &EnqueueOptions{}
 	if len(options) > 0 {

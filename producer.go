@@ -16,8 +16,7 @@ type producer struct {
 	storage    Storage
 	workers    map[string]*workerInfo
 	jobTimeout time.Duration
-
-	metrics metricsState
+	metrics    metricsState
 }
 
 type producerConfig struct {
@@ -66,27 +65,35 @@ func (p *producer) process(ctx context.Context) {
 	}
 }
 
-func (p *producer) heartbeat(ctx context.Context, queues StringArray) {
-	ticker := time.NewTicker(time.Second * 5)
+func (p *producer) heartbeat(ctx context.Context, interval time.Duration, queues StringArray) {
+	p.logger.InfoContext(ctx, "Heartbeat started", slog.String("queue", p.config.queueName), slog.String("interval", interval.String()))
+
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
+
+	beat := func() {
+		if err := p.storage.UpdateHeartbeat(p.nodeID, queues, p.config.queueName, p.metrics.snapshot()); err != nil {
+			p.metrics.heartbeatErrors.Add(1)
+			if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+				p.logger.ErrorContext(ctx, "Failed to update heartbeat", slog.String("error", err.Error()))
+			}
+			return
+		}
+
+		p.metrics.heartbeatsSent.Add(1)
+		p.metrics.lastHeartbeat.Store(time.Now().UnixNano())
+
+		p.logger.DebugContext(ctx, "heartbeat", slog.Any("metrics", p.metrics.snapshot()))
+	}
+
+	beat()
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if err := p.storage.UpdateHeartbeat(p.nodeID, queues, p.config.queueName, p.metrics.snapshot()); err != nil {
-				p.metrics.heartbeatErrors.Add(1)
-				if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
-					p.logger.ErrorContext(ctx, "Failed to update heartbeat", slog.String("error", err.Error()))
-				}
-				return
-			}
-
-			p.metrics.heartbeatsSent.Add(1)
-			p.metrics.lastHeartbeat.Store(time.Now().UnixNano())
-
-			p.logger.InfoContext(ctx, "heartbeat", slog.Any("metrics", p.metrics.snapshot()))
+			beat()
 		}
 	}
 }
@@ -115,7 +122,6 @@ func (p *producer) executor(ctx context.Context, cancel context.CancelCauseFunc,
 	var (
 		timeout = work.timeout()
 		state   = JobStateCompleted
-		attempt *AttemptError
 	)
 
 	if timeout == 0 {
@@ -130,28 +136,29 @@ func (p *producer) executor(ctx context.Context, cancel context.CancelCauseFunc,
 
 	if err := work.work(ctx); err != nil {
 		p.metrics.jobsFailed.Add(1)
-		msg := err.Error()
-		attempt = &AttemptError{
+
+		var attempt = &AttemptError{
 			NodeID:  p.nodeID.String(),
 			At:      time.Now(),
 			Attempt: job.Attempt,
-			Error:   msg,
+			Error:   err.Error(),
 			Trace:   string(debug.Stack()),
 		}
 
 		state = JobStateAvailable
 		if job.Attempt >= job.Options.MaxRetries {
-
-			p.metrics.jobsCancelled.Add(1)
 			state = JobStateCancelled
+			p.metrics.jobsCancelled.Add(1)
 		}
 
 		if p.storage.UpdateJobState(&job.ID, state, time.Now(), attempt) != nil {
 			return
 		}
 
-		p.logger.DebugContext(ctx, "Job failed", slog.Int64("job_id", int64(job.ID)), slog.String("kind", job.Kind),
-			slog.String("args", string(job.Args)), slog.String("error", msg))
+		p.logger.DebugContext(ctx, "Job failed", slog.Int64("job_id", int64(job.ID)),
+			slog.String("kind", job.Kind), slog.String("args", string(job.Args)),
+			slog.String("error", err.Error()))
+
 		return
 	}
 
