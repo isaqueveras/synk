@@ -60,5 +60,9 @@ func main() {
 		}
 	}
 
-	time.Sleep(time.Hour)
+	for {
+		_, _ = client.Enqueue(ctx, "Job da fila Default", worker.ContractArgs{}, &synk.EnqueueOptions{Queue: "default"})
+		_, _ = client.Enqueue(ctx, "Job da fila Ownership", worker.BiometryArgs{}, &synk.EnqueueOptions{Queue: "ownership"})
+		time.Sleep(time.Second / 100)
+	}
 }

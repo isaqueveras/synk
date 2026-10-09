@@ -40,12 +40,10 @@ func (pg *postgres) Ping() error {
 }
 
 // GetJobAvailable retrieves a list of available jobs from the specified queue with a limit on the number of jobs.
-func (pg *postgres) GetJobAvailable(nodeID *synk.NodeID, queue string, limit int32) (items []*synk.JobRow, err error) {
-	err = pg.withTx(func(ctx context.Context, tx *sql.Tx) error {
-		items, err = pg.queries.GetJobAvailable(ctx, tx, queue, limit, nodeID)
-		return err
-	})
-	return items, err
+func (pg *postgres) GetJobAvailable(nodeID *synk.NodeID, queue string, limit int64) (items []*synk.JobRow, err error) {
+	ctx, cancel := context.WithTimeout(pg.ctx, pg.timeout)
+	defer cancel()
+	return pg.queries.GetJobAvailable(ctx, pg.db, queue, limit, nodeID)
 }
 
 // Enqueue inserts a new job into the specified queue with the given kind and arguments
@@ -95,11 +93,9 @@ func (pg *postgres) UpdateJobState(jobID *synk.JobID, newState synk.JobState, fi
 
 // Cleaner is a method for cleaning up expired jobs based on their state and age.
 func (pg *postgres) Cleaner(clear *synk.CleanerConfig) (totalDeleted int64, err error) {
-	err = pg.withTx(func(ctx context.Context, tx *sql.Tx) error {
-		totalDeleted, err = pg.queries.Cleaner(ctx, tx, clear)
-		return err
-	})
-	return totalDeleted, err
+	ctx, cancel := context.WithTimeout(pg.ctx, pg.timeout)
+	defer cancel()
+	return pg.queries.Cleaner(ctx, pg.db, clear)
 }
 
 // Retry retries a job by its ID and returns an error if the operation fails.
@@ -123,12 +119,10 @@ func (pg *postgres) Delete(jobID *synk.JobID) error {
 	})
 }
 
-// Heartbeat updates the heartbeat timestamp for a node in the database,
+// UpdateHeartbeat updates the heartbeat timestamp for a node in the database,
 // indicating that it is still active and processing jobs.
-func (pg *postgres) Heartbeat(nodeID *synk.NodeID, queues []string) error {
-	return pg.withTx(func(ctx context.Context, tx *sql.Tx) error {
-		return pg.queries.Heartbeat(ctx, tx, nodeID, queues)
-	})
+func (pg *postgres) UpdateHeartbeat(nodeID *synk.NodeID, queues []string, queueName string, metrics *synk.Metrics) error {
+	return pg.queries.UpdateHeartbeat(pg.ctx, pg.db, nodeID, queues, queueName, metrics)
 }
 
 func (pg *postgres) withTx(fn func(context.Context, *sql.Tx) error) error {

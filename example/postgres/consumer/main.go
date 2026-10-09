@@ -19,7 +19,8 @@ import (
 func main() {
 	stdlib.RegisterConnConfig(&pgx.ConnConfig{})
 
-	// Open a connection to the PostgreSQL database using the connection string from the environment variable.
+	// Open a connection to the PostgreSQL database using the connection
+	// string from the environment variable.
 	db, err := sql.Open("pgx", os.Getenv("SYNK_DATABASE_POSTGRES"))
 	if err != nil {
 		panic(err)
@@ -30,30 +31,38 @@ func main() {
 	db.SetMaxIdleConns(10)
 	db.SetConnMaxLifetime(time.Hour)
 
-	// Create a logger instance.
-	logg := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
-
 	var opts = []synk.Option{
 		// Sets the node ID for the configuration.
-		synk.WithNodeID("c_01M249QK9NCW6XCW02M73MPAP9"),
+		synk.WithNodeID("c_01M47M722ATBKSD26Y0AAQCZZH"),
 
 		// Sets the configuration for the queues to be used.
-		synk.WithQueue("default", synk.QueueConfigDefault),
-		synk.WithQueue("ownership", &synk.QueueConfig{
-			MaxWorkers: 10,
+		synk.WithQueue("default", &synk.QueueConfig{
+			MaxWorkers: 100,
 			TimeFetch:  time.Second,
-			JobTimeout: time.Minute * 10,
+			JobTimeout: time.Second * 30,
+		}),
+
+		synk.WithQueue("ownership", &synk.QueueConfig{
+			MaxWorkers: 100,
+			TimeFetch:  time.Second,
+			JobTimeout: time.Minute * 30,
 		}),
 
 		// Set storage configuration using PostgreSQL.
 		synk.WithStorage(postgresql.New(db)),
 
 		// Sets the logger to be used.
-		synk.WithLogger(logg),
+		synk.WithLogger(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))),
 
 		// Sets the workers to be used.
 		synk.WithWorker(worker.NewContract()),
 		synk.WithWorker(worker.NewBiometry()),
+
+		// Sets the healthbeat configuration for the client,
+		// which will periodically check the health of the system.
+		synk.WithHeartbeat(&synk.HeartbeatConfig{
+			Interval: time.Second * 5,
+		}),
 
 		// Sets the job cleaner configuration.
 		synk.WithCleaner(&synk.CleanerConfig{
@@ -72,7 +81,7 @@ func main() {
 	client := synk.NewClient(ctx, opts...)
 
 	var wg sync.WaitGroup
-	wg.Go(client.Run)
-	wg.Go(client.RunCleaner)
+	wg.Go(client.InitializeProducers)
+	wg.Go(client.InitializeCleaner)
 	wg.Wait()
 }

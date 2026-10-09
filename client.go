@@ -31,28 +31,20 @@ type client struct {
 }
 
 type config struct {
-	nodeID  NodeID
-	queues  Queues
-	workers map[string]*workerInfo
-	cleaner *CleanerConfig
-	storage Storage
-	logger  *slog.Logger
-}
-
-// QueueConfigDefault is the default configuration for the queue system.
-// It sets the maximum number of workers to 100, the time interval to fetch jobs to 200 milliseconds,
-// and the timeout for each job to 1 minute.
-var QueueConfigDefault = &QueueConfig{
-	MaxWorkers: 100,
-	TimeFetch:  time.Millisecond * 200,
-	JobTimeout: time.Minute,
+	nodeID    NodeID
+	queues    Queues
+	storage   Storage
+	workers   map[string]*workerInfo
+	logger    *slog.Logger
+	cleaner   *CleanerConfig
+	heartbeat *HeartbeatConfig
 }
 
 // QueueConfig holds the configuration settings for a job queue.
 // It includes the maximum number of workers, the time interval for fetching jobs,
 // and the timeout duration for each job.
 type QueueConfig struct {
-	MaxWorkers uint16
+	MaxWorkers uint64
 	TimeFetch  time.Duration
 
 	workCtx    context.Context
@@ -71,7 +63,7 @@ func NewClient(ctx context.Context, opts ...Option) *client {
 		cfg: &config{
 			queues:  make(map[string]*QueueConfig),
 			workers: make(map[string]*workerInfo),
-			logger:  slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelWarn})),
+			logger:  slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})),
 		},
 	}
 
@@ -89,7 +81,7 @@ func NewClient(ctx context.Context, opts ...Option) *client {
 		clt.nodeID = NodeID(hostname + "_" + time.Now().Format(time.RFC3339))
 	}
 
-	clt.cfg.logger = clt.cfg.logger.WithGroup("node").With(slog.String("id", clt.nodeID.String()))
+	clt.cfg.logger = clt.cfg.logger.With(slog.String("node_id", clt.nodeID.String()))
 	if clt.cfg.storage == nil {
 		clt.cfg.logger.Error("no storage configured")
 		return clt
@@ -107,16 +99,15 @@ func NewClient(ctx context.Context, opts ...Option) *client {
 	}
 
 	for queue, config := range clt.cfg.queues {
-		logger := clt.cfg.logger.WithGroup("producer").With(slog.String("queue", queue))
+		logger := clt.cfg.logger.With(slog.String("queue", queue))
 		clt.producers[queue] = &producer{
-			nodeID:      &clt.nodeID,
-			logger:      logger,
-			workers:     clt.cfg.workers,
-			storage:     clt.cfg.storage,
-			jobTimeout:  config.JobTimeout,
-			jobsChannel: make(chan *JobRow, config.MaxWorkers),
+			nodeID:     &clt.nodeID,
+			logger:     logger,
+			workers:    clt.cfg.workers,
+			storage:    clt.cfg.storage,
+			jobTimeout: config.JobTimeout,
 			config: &producerConfig{
-				maxWorkerCount: config.MaxWorkers,
+				maxWorkerCount: uint64(config.MaxWorkers),
 				timeFetch:      config.TimeFetch,
 				queueName:      queue,
 				workers:        clt.cfg.workers,
@@ -169,11 +160,11 @@ func (c *client) Enqueue(ctx context.Context, name string, args JobArgs, options
 	return *jobID, nil
 }
 
-// Run it initializes the client's context and starts the producers for each queue.
+// InitializeProducers it initializes the client's context and starts the producers for each queue.
 // Each producer runs in a separate goroutine, fetching and processing jobs according to its configuration.
 // The method waits for all producers to complete their work before returning.
 // It also sets up a heartbeat mechanism to log the total number of completed jobs at regular intervals.
-func (c *client) Run() {
+func (c *client) InitializeProducers() {
 	c.wg.Add(len(c.producers))
 	for _, producer := range c.producers {
 		pdc := producer
@@ -181,30 +172,28 @@ func (c *client) Run() {
 		go func() {
 			defer c.wg.Done()
 
-			go pdc.heartbeat(c.ctx, c.cfg.queues.Names())
+			ticker := time.NewTicker(pdc.config.timeFetch)
+			defer ticker.Stop()
 
-			jobs := make(chan []*JobRow)
+			// If heartbeat configuration is provided, start the heartbeat
+			// goroutine to periodically send heartbeats to the storage.
+			if c.cfg.heartbeat != nil && c.cfg.heartbeat.Interval > 0 {
+				go pdc.heartbeat(c.ctx, c.cfg.heartbeat.Interval, c.cfg.queues.Names())
+			}
+
 			for {
 				select {
 				case <-c.ctx.Done():
-					pdc.logger.DebugContext(c.ctx, "Producer context done: "+c.ctx.Err().Error())
+					pdc.logger.DebugContext(c.ctx, "producer context done: "+c.ctx.Err().Error())
 					return
-				case <-time.NewTicker(pdc.config.timeFetch).C:
-					pdc.process(c.workCtx, jobs)
-					select {
-					case <-c.ctx.Done():
-						pdc.logger.DebugContext(c.ctx, "Producer context done: "+c.ctx.Err().Error())
-						return
-					default:
-					}
-				case <-pdc.jobsChannel:
-					pdc.numJobsActive.Add(-1)
+				case <-ticker.C:
+					pdc.process(c.workCtx)
 				}
 			}
 		}()
 	}
 
-	c.cfg.logger.InfoContext(c.ctx, "Client started",
+	c.cfg.logger.InfoContext(c.ctx, "Node initialized and producers started",
 		slog.Int("num_producers", len(c.producers)),
 		slog.Int("num_queues", len(c.cfg.queues)),
 		slog.Int("num_workers", len(c.cfg.workers)),
@@ -213,8 +202,8 @@ func (c *client) Run() {
 	c.wg.Wait()
 }
 
-// RunCleaner runs the cleaner function with the provided context and cleaner configuration.
-func (c *client) RunCleaner() {
+// InitializeCleaner runs the cleaner function with the provided context and cleaner configuration.
+func (c *client) InitializeCleaner() {
 	if c.cfg.cleaner.CleanInterval == 0 {
 		c.cfg.logger.Error("cleaner interval is required")
 		return

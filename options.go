@@ -78,16 +78,32 @@ func WithCleaner(cleaner *CleanerConfig) Option {
 // If no QueueConfig is provided, a default configuration with MaxWorkers set to 100 is used.
 // The function returns an Option that updates the Config with the specified queue configuration.
 func WithQueue(name string, queueCfg ...*QueueConfig) Option {
-	q := &QueueConfig{
+	queueCfgDefault := &QueueConfig{
 		MaxWorkers: 100,
 		TimeFetch:  time.Millisecond * 200,
+		JobTimeout: time.Minute * 5,
 	}
 
-	if len(queueCfg) >= 1 {
-		q = queueCfg[0]
+	if len(queueCfg) == 0 {
+		return func(cfg *config) {
+			cfg.queues[name] = queueCfgDefault
+		}
 	}
 
 	return func(cfg *config) {
+		q := queueCfg[0]
+		if q.MaxWorkers == 0 {
+			q.MaxWorkers = queueCfgDefault.MaxWorkers
+		}
+
+		if q.TimeFetch == 0 {
+			q.TimeFetch = queueCfgDefault.TimeFetch
+		}
+
+		if q.JobTimeout == 0 {
+			q.JobTimeout = queueCfgDefault.JobTimeout
+		}
+
 		cfg.queues[name] = q
 	}
 }
@@ -109,18 +125,34 @@ func WithLogger(logger *slog.Logger) Option {
 	}
 }
 
+// WithHeartbeat sets the heartbeat configuration for the synk client.
+type HeartbeatConfig struct {
+	// Interval is the time interval at which the heartbeat will be sent to the storage.
+	// It is used to indicate that the node is alive and functioning properly.
+	Interval time.Duration
+}
+
+// WithHeartbeat sets the heartbeat configuration for the synk client.
+// It takes a HeartbeatConfig struct as an argument and returns an Option function
+// that updates the Config with the provided heartbeat configuration.
+func WithHeartbeat(hbc *HeartbeatConfig) Option {
+	return func(c *config) {
+		c.heartbeat = hbc
+	}
+}
+
 func getOptionsOrDefault(options ...*EnqueueOptions) (JobState, *EnqueueOptions, error) {
 	opts := &EnqueueOptions{}
 	if len(options) > 0 {
 		opts = options[0]
 	}
 
-	if (opts.Priority > PriorityLow) || (opts.Priority < PriorityCritical) {
-		return JobStateCancelled, nil, errors.New("priority must be between 1 and 4")
-	}
-
 	if opts.Priority == 0 {
 		opts.Priority = PriorityMedium
+	}
+
+	if (opts.Priority > PriorityLow) || (opts.Priority < PriorityCritical) {
+		return JobStateCancelled, nil, errors.New("priority must be between 1 and 4")
 	}
 
 	state := JobStateAvailable
